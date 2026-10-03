@@ -1,5 +1,5 @@
 // Demo store: everything in this browser's IndexedDB. Used when js/config.js has no
-// Supabase settings, so the UI can be tried without any backend. No AI tagging here.
+// Supabase settings, so the UI can be tried without any backend.
 
 const DB_NAME = 'ootd-demo';
 
@@ -71,10 +71,6 @@ export function createLocalStore() {
 
     async deleteItem(id) {
       await tx(db, 'readwrite', (s) => s.delete(id));
-    },
-
-    async suggestTags() {
-      return null;
     },
   };
 }

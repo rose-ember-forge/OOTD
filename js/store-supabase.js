@@ -105,14 +105,5 @@ export function createSupabaseStore(url, anonKey) {
       if (error) throw error;
       if (data) await sb.storage.from(BUCKET).remove([data.photo_path, data.thumb_path].filter(Boolean));
     },
-
-    // Calls the `tag-item` Edge Function, which asks Claude for type/subtype/color/pattern.
-    async suggestTags(imageBase64, mediaType) {
-      const { data, error } = await sb.functions.invoke('tag-item', {
-        body: { image: imageBase64, media_type: mediaType },
-      });
-      if (error) throw error;
-      return data;
-    },
   };
 }

@@ -220,7 +220,6 @@ async function renderEditor(id) {
   const draft = { ...EMPTY, ...(existing ?? {}) };
   let images = null; // set when a new photo was processed
   let previewUrl = existing?.photoUrl ?? null;
-  let suggested = {}; // field → true when the value came from AI and is unconfirmed
   const occasionChoices = allOccasions();
 
   warmUpBackgroundRemoval();
@@ -257,21 +256,21 @@ async function renderEditor(id) {
       </fieldset>
 
       <fieldset>
-        <legend>Type <span class="ai-badge" data-for="type" hidden>AI suggestion</span></legend>
+        <legend>Type</legend>
         <div class="chips" id="f-type"></div>
-        <label class="field">Subtype <span class="ai-badge" data-for="subtype" hidden>AI suggestion</span>
+        <label class="field">Subtype
           <input type="text" name="subtype" list="subtypes" autocomplete="off">
           <datalist id="subtypes"></datalist>
         </label>
       </fieldset>
 
       <fieldset>
-        <legend>Color <span class="ai-badge" data-for="color" hidden>AI suggestion</span></legend>
+        <legend>Color</legend>
         <div class="chips" id="f-color"></div>
       </fieldset>
 
       <fieldset>
-        <legend>Pattern <span class="ai-badge" data-for="pattern" hidden>AI suggestion</span></legend>
+        <legend>Pattern</legend>
         <div class="chips" id="f-pattern"></div>
       </fieldset>
 
@@ -297,20 +296,11 @@ async function renderEditor(id) {
   // Text inputs ↔ draft
   for (const name of ['subtype', 'fabric', 'fit', 'brand', 'notes']) form.elements[name].value = draft[name] ?? '';
   form.elements.tags.value = (draft.tags ?? []).join(', ');
-  form.elements.subtype.oninput = () => {
-    draft.subtype = form.elements.subtype.value;
-    delete suggested.subtype;
-    paintBadges();
-  };
 
   function paintPreview() {
     $('#preview').innerHTML = previewUrl
       ? `<img src="${esc(previewUrl)}" alt="Item photo">`
       : `<span class="muted">No photo yet</span>`;
-  }
-
-  function paintBadges() {
-    form.querySelectorAll('.ai-badge').forEach((b) => (b.hidden = !suggested[b.dataset.for]));
   }
 
   function paintChips() {
@@ -322,7 +312,6 @@ async function renderEditor(id) {
     $('#f-pattern').innerHTML = PATTERNS.map((p) => chip('pattern', p, capitalize(p), draft.pattern === p)).join('');
     const subs = TYPES.find((t) => t.key === draft.type)?.subtypes ?? TYPES.flatMap((t) => t.subtypes);
     $('#subtypes').innerHTML = subs.map((s) => `<option value="${esc(s)}">`).join('');
-    paintBadges();
   }
 
   form.addEventListener('click', (e) => {
@@ -334,7 +323,6 @@ async function renderEditor(id) {
       draft[group] = list.includes(value) ? list.filter((x) => x !== value) : [...list, value];
     } else {
       draft[group] = draft[group] === value ? '' : value;
-      delete suggested[group];
     }
     paintChips();
   });
@@ -364,7 +352,6 @@ async function renderEditor(id) {
       previewUrl = URL.createObjectURL(result.photo);
       paintPreview();
       setStatus(result.backgroundRemoved || !$('#removeBg').checked ? '' : 'Background removal unavailable; kept the original photo.');
-      await suggest(result.tagImage);
     } catch (err) {
       console.error(err);
       setStatus('Could not read that photo: ' + err.message);
@@ -374,28 +361,6 @@ async function renderEditor(id) {
   }
   $('#camera').onchange = onPhoto;
   $('#library').onchange = onPhoto;
-
-  // AI suggestions only fill fields she hasn't set yet; she confirms by saving.
-  async function suggest(tagImage) {
-    if (store.mode === 'demo') return;
-    setStatus('Suggesting tags…');
-    try {
-      const s = await store.suggestTags(tagImage.base64, tagImage.mediaType);
-      if (!s) return setStatus('');
-      for (const k of ['type', 'subtype', 'color', 'pattern']) {
-        if (s[k] && !draft[k]) {
-          draft[k] = s[k];
-          suggested[k] = true;
-        }
-      }
-      form.elements.subtype.value = draft.subtype ?? '';
-      paintChips();
-      setStatus(Object.keys(suggested).length ? 'Check the AI suggestions below, then save.' : '');
-    } catch (err) {
-      console.warn('Tag suggestion failed', err);
-      setStatus('Couldn’t suggest tags this time; fill them in by hand.');
-    }
-  }
 
   form.onsubmit = async (e) => {
     e.preventDefault();

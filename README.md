@@ -1,26 +1,25 @@
 # Wardrobe
 
 A web app that installs like an app (PWA) for keeping an inventory of clothes: photograph each piece,
-the background is removed, AI suggests type/subtype/color/pattern, and the wardrobe can be filtered by
-season, then occasion, then type, color and free text. Same data on iPhone and Mac.
+the background is removed, tag it, and filter the wardrobe by season, then occasion, then type,
+color and free text. Same data on iPhone and Mac.
 
 No build step: plain HTML, CSS and JavaScript modules. Libraries load from jsDelivr.
 
 ```
 index.html, css/, js/          the app
   js/config.js                 Supabase URL + anon key (empty = demo mode)
-  js/store-supabase.js         cloud data: auth, items table, photo storage, AI tagging
+  js/store-supabase.js         cloud data: auth, items table, photo storage
   js/store-local.js            demo data in the browser (IndexedDB)
   js/image.js                  resize, background removal, thumbnails
 sw.js, manifest.webmanifest    install-to-home-screen + offline app shell
 supabase/migrations/           database table, security rules, photo bucket
-supabase/functions/tag-item/   Edge Function that asks Claude to tag a photo
 ```
 
 ## Try it locally (demo mode)
 
 With `js/config.js` left empty the app runs without any backend; items are stored in that browser only
-and there are no AI suggestions.
+and there is no sign-in.
 
 ```
 python -m http.server 8080
@@ -34,18 +33,10 @@ Open http://localhost:8080.
 2. **Database:** open SQL Editor, paste `supabase/migrations/20261003000000_init.sql`, run it.
    This creates the `items` table, row-level security (each user only sees their own items)
    and a private `photos` storage bucket.
-3. **App config:** Project Settings → API. Copy the Project URL and the `anon` public key into
-   `js/config.js`.
-4. **AI tagging:** install the Supabase CLI, then from this folder:
-   ```
-   supabase login
-   supabase link --project-ref <your-project-ref>
-   supabase secrets set ANTHROPIC_API_KEY=<key from console.anthropic.com>
-   supabase functions deploy tag-item
-   ```
-   The function uses `claude-opus-5-5` at low effort; set a `CLAUDE_MODEL` secret to use another model.
-   It sends a 512px JPEG per photo, so each tag request is small.
-5. **Sign in:** Authentication → URL Configuration: set Site URL to where the app is hosted and add
+3. **App config:** Project Settings → API Keys. Copy the Project URL and the publishable key
+   (`sb_publishable_…`, called the anon key in older projects) into `js/config.js`. That key is
+   public by design. Never put the secret key (`sb_secret_…` / `service_role`) in the app.
+4. **Sign in:** Authentication → URL Configuration: set Site URL to where the app is hosted and add
    it to Redirect URLs (also `http://localhost:8080` for testing).
    - **Sign in with Apple** needs an Apple Developer account (paid). Create a Services ID and key in
      the Apple developer portal, then enable the Apple provider in Authentication → Providers.
@@ -73,5 +64,6 @@ When you ship changes, bump `VERSION` in `sw.js` so installed copies refresh.
 
 ## Not built yet
 
-Bulk import (select many photos, tag all, swipe to confirm) is the next piece. Outfit suggestions,
+Bulk import (select many photos, then a quick pass to tag each) is the next piece. AI tag
+suggestions were dropped to keep the app free to run; they could come back later. Outfit suggestions,
 an outfit builder, weather and sharing are deliberately left for later.

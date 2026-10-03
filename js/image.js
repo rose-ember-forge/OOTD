@@ -5,7 +5,6 @@
 const PHOTO_MAX = 1200;
 const THUMB_MAX = 400;
 const WORK_MAX = 1600;
-const TAG_MAX = 512;
 
 let bgLib;
 const loadBgLib = () =>
@@ -37,19 +36,14 @@ async function decode(blob) {
   }
 }
 
-function drawScaled(source, max, background) {
+function drawScaled(source, max) {
   const w = source.width;
   const h = source.height;
   const scale = Math.min(1, max / Math.max(w, h));
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(w * scale);
   canvas.height = Math.round(h * scale);
-  const ctx = canvas.getContext('2d');
-  if (background) {
-    ctx.fillStyle = background;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
-  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
   return canvas;
 }
 
@@ -98,7 +92,7 @@ function trimTransparent(source) {
 
 /**
  * Turn a picked file into the images we store.
- * Returns { photo, thumb, tagImage: {base64, mediaType}, backgroundRemoved }.
+ * Returns { photo, thumb, backgroundRemoved }.
  * If background removal fails (old device, offline), the original photo is used.
  */
 export async function processPhoto(file, { removeBackground = true, onStatus = () => {} } = {}) {
@@ -126,22 +120,5 @@ export async function processPhoto(file, { removeBackground = true, onStatus = (
     encode(drawScaled(source, PHOTO_MAX), backgroundRemoved),
     encode(drawScaled(source, THUMB_MAX), backgroundRemoved),
   ]);
-  // The tagging model gets a small JPEG on white, which keeps the request cheap.
-  const tagBlob = await toBlob(drawScaled(source, TAG_MAX, '#ffffff'), 'image/jpeg', 0.85);
-
-  return {
-    photo,
-    thumb,
-    backgroundRemoved,
-    tagImage: { base64: await blobToBase64(tagBlob), mediaType: 'image/jpeg' },
-  };
-}
-
-function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result).split(',')[1]);
-    r.onerror = () => reject(r.error);
-    r.readAsDataURL(blob);
-  });
+  return { photo, thumb, backgroundRemoved };
 }
