@@ -12,6 +12,7 @@ index.html, css/, js/          the app
   js/store-supabase.js         cloud data: auth, items table, photo storage
   js/store-local.js            demo data in the browser (IndexedDB)
   js/image.js                  resize, background removal, thumbnails
+  js/importer.js               bulk import runner
 sw.js, manifest.webmanifest    install-to-home-screen + offline app shell
 supabase/migrations/           database table, security rules, photo bucket
 ```
@@ -62,8 +63,18 @@ When you ship changes, bump `VERSION` in `sw.js` so installed copies refresh.
 - **Seasons:** an item can have several. Items marked *All year* show up under any season filter.
 - **Occasions:** six defaults; custom ones typed into an item become filter chips automatically.
 
+## Bulk import
+
+**Import** on the wardrobe screen takes many photos at once. Optionally pick a season and occasion
+for the whole batch first. Each photo has its background removed and is uploaded as soon as it's
+ready, so a stopped import keeps everything finished so far. Keep the app open with the screen on
+while it runs; you can browse the wardrobe meanwhile.
+
+Imported photos have no type yet and show as *To tag*. **Tag photos** steps through them one by
+one: pick type, color and pattern, then **Save & next**. **Skip** (or swiping the photo left) leaves a
+photo for later.
+
 ## Not built yet
 
-Bulk import (select many photos, then a quick pass to tag each) is the next piece. AI tag
-suggestions were dropped to keep the app free to run; they could come back later. Outfit suggestions,
-an outfit builder, weather and sharing are deliberately left for later.
+AI tag suggestions were dropped to keep the app free to run; they could come back later. Outfit
+suggestions, an outfit builder, weather and sharing are deliberately left for later.

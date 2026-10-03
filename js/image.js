@@ -7,6 +7,7 @@ const THUMB_MAX = 400;
 const WORK_MAX = 1600;
 
 let bgLib;
+let bgUsedOnce = false;
 const loadBgLib = () =>
   (bgLib ??= import('https://cdn.jsdelivr.net/npm/@imgly/background-removal@1/+esm'));
 
@@ -105,11 +106,12 @@ export async function processPhoto(file, { removeBackground = true, onStatus = (
   let backgroundRemoved = false;
   if (removeBackground) {
     try {
-      onStatus('Removing background… (first time takes a while)');
+      onStatus(bgUsedOnce ? 'Removing background…' : 'Removing background… (the first one takes a while)');
       const { removeBackground: remove } = await loadBgLib();
       const cutBlob = await remove(await toBlob(working, 'image/jpeg', 0.92));
       source = trimTransparent(await decode(cutBlob));
       backgroundRemoved = true;
+      bgUsedOnce = true;
     } catch (err) {
       console.warn('Background removal failed, keeping original photo', err);
     }

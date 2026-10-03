@@ -4,11 +4,14 @@ import {
   seasonLabel, typeLabel, capitalize,
 } from './taxonomy.js';
 import { processPhoto, warmUpBackgroundRemoval } from './image.js';
+import { importState, startImport, stopImport, onImportProgress } from './importer.js';
 
 const app = document.getElementById('app');
 
 let store;
 let items = null; // cached list; null means "needs loading"
+let itemsLoadedAt = 0;
+const ITEMS_MAX_AGE = 45 * 60 * 1000; // photo links from the cloud expire after an hour
 const filters = { seasons: new Set(), occasions: new Set(), types: new Set(), colors: new Set(), q: '', more: false };
 
 // ---------- helpers ----------
@@ -35,10 +38,16 @@ function allOccasions() {
 }
 
 async function loadItems(force = false) {
-  if (items && !force) return items;
+  if (items && !force && Date.now() - itemsLoadedAt < ITEMS_MAX_AGE) return items;
   items = await store.listItems();
+  itemsLoadedAt = Date.now();
   return items;
 }
+
+// Imported photos arrive without a type; those make up the "to tag" queue, oldest first.
+const needsTagging = (i) => !i.type;
+const tagQueue = () =>
+  (items ?? []).filter(needsTagging).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
 
 // ---------- routing ----------
 
@@ -47,8 +56,10 @@ async function route() {
   try {
     if (store.mode === 'cloud' && !(await store.init())) return renderSignIn();
     if (hash === '#/add') return renderEditor(null);
-    const m = hash.match(/^#\/item\/(.+)$/);
-    if (m) return renderEditor(decodeURIComponent(m[1]));
+    if (hash === '#/import') return renderImport();
+    if (hash === '#/review') return startReview();
+    const m = hash.match(/^#\/(item|review)\/(.+)$/);
+    if (m) return renderEditor(decodeURIComponent(m[2]), { review: m[1] === 'review' });
     return renderGrid();
   } catch (err) {
     console.error(err);
@@ -112,26 +123,42 @@ const activeFilterCount = () =>
 async function renderGrid() {
   app.innerHTML = `<div class="page"><p class="muted">Loading…</p></div>`;
   await loadItems();
+  const toTag = items.filter(needsTagging).length;
   app.innerHTML = `
     <header class="topbar">
       <h1 class="brand">Wardrobe</h1>
       <div class="topbar-actions">
-        <button class="btn btn-ghost" id="account" title="${esc(store.userLabel())}">${store.mode === 'demo' ? 'Demo' : 'Sign out'}</button>
+        <a class="btn" href="#/import">Import</a>
         <a class="btn btn-primary" href="#/add">+ Add</a>
       </div>
     </header>
     ${store.mode === 'demo' ? `<p class="banner">Demo mode: items are saved in this browser only. Add Supabase settings in <code>js/config.js</code> to sync.</p>` : ''}
+    <a class="banner banner-link" id="import-pill" href="#/import" hidden></a>
+    ${toTag ? `<a class="banner banner-link" href="#/review"><span><strong>${toTag}</strong> photo${toTag === 1 ? '' : 's'} to tag</span><span>Start ›</span></a>` : ''}
     <section class="filters" id="filters"></section>
-    <main class="grid" id="grid"></main>`;
+    <main class="grid" id="grid"></main>
+    <footer class="footer muted">
+      <span>${esc(store.userLabel())}</span>
+      ${store.mode === 'cloud' ? `<button type="button" class="link" id="signout">Sign out</button>` : ''}
+    </footer>`;
 
-  app.querySelector('#account').onclick = async () => {
-    if (store.mode === 'demo') return toast(store.userLabel());
+  const pill = app.querySelector('#import-pill');
+  const paintPill = () => {
+    if (!pill.isConnected) return unsubscribe();
+    pill.hidden = !importState.running;
+    pill.innerHTML = `<span>Importing ${importState.done} of ${importState.total}…</span><span>View ›</span>`;
+  };
+  const unsubscribe = onImportProgress(paintPill);
+  paintPill();
+
+  app.querySelector('#signout')?.addEventListener('click', async () => {
+    if (importState.running) return toast('Wait for the import to finish first.', true);
     if (confirm('Sign out on this device?')) {
       await store.signOut();
       items = null;
       route();
     }
-  };
+  });
   renderFilters();
   renderCards();
 }
@@ -188,7 +215,8 @@ function renderCards() {
   const shown = items.filter(matches);
   app.querySelector('#count').textContent = `${shown.length} of ${items.length}`;
   if (!items.length) {
-    grid.innerHTML = `<div class="empty"><p>Your wardrobe is empty.</p><a class="btn btn-primary" href="#/add">Add your first piece</a></div>`;
+    grid.innerHTML = `<div class="empty"><p>Your wardrobe is empty.</p>
+      <div class="empty-actions"><a class="btn btn-primary" href="#/import">Import photos</a><a class="btn" href="#/add">Add one piece</a></div></div>`;
     return;
   }
   if (!shown.length) {
@@ -200,7 +228,7 @@ function renderCards() {
       (i) => `
       <a class="card" href="#/item/${encodeURIComponent(i.id)}">
         <div class="card-img">${i.thumbUrl ? `<img src="${esc(i.thumbUrl)}" alt="" loading="lazy">` : ''}</div>
-        <div class="card-label">${esc(capitalize(i.subtype || typeLabel(i.type) || 'Item'))}</div>
+        <div class="card-label">${needsTagging(i) ? '<span class="to-tag">To tag</span>' : esc(capitalize(i.subtype || typeLabel(i.type)))}</div>
       </a>`,
     )
     .join('');
@@ -213,32 +241,64 @@ const EMPTY = {
   fabric: '', fit: '', brand: '', notes: '', tags: [],
 };
 
-async function renderEditor(id) {
+// Next untagged item after `id` in the queue, wrapping around; null when none are left.
+// Uses the position among all items, so it still works once `id` itself has been tagged.
+function nextToTag(id) {
+  const all = [...(items ?? [])].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  const at = all.findIndex((i) => i.id === id);
+  const rotated = at < 0 ? all : [...all.slice(at + 1), ...all.slice(0, at)];
+  return rotated.find((i) => i.id !== id && needsTagging(i)) ?? null;
+}
+
+async function startReview() {
+  await loadItems();
+  const first = tagQueue()[0];
+  if (!first) {
+    toast('Nothing left to tag.');
+    return location.replace('#/');
+  }
+  location.replace(`#/review/${encodeURIComponent(first.id)}`);
+}
+
+function goToNextOrFinish(id) {
+  const next = nextToTag(id);
+  if (next) {
+    location.hash = `#/review/${encodeURIComponent(next.id)}`;
+  } else {
+    toast('All photos tagged.');
+    location.hash = '#/';
+  }
+}
+
+// `review`: tagging imported photos one after another (Save & next, Skip, swipe to skip).
+async function renderEditor(id, { review = false } = {}) {
   app.innerHTML = `<div class="page"><p class="muted">Loading…</p></div>`;
   await loadItems();
   const existing = id ? await store.getItem(id) : null;
+  const left = review ? tagQueue().length : 0;
   const draft = { ...EMPTY, ...(existing ?? {}) };
   let images = null; // set when a new photo was processed
   let previewUrl = existing?.photoUrl ?? null;
   const occasionChoices = allOccasions();
 
-  warmUpBackgroundRemoval();
+  if (!review) warmUpBackgroundRemoval();
 
   app.innerHTML = `
     <header class="topbar">
       <a class="btn btn-ghost" href="#/">‹ Back</a>
-      <h1 class="title">${existing ? 'Edit item' : 'Add item'}</h1>
-      <span class="spacer"></span>
+      <h1 class="title">${review ? 'Tag photos' : existing ? 'Edit item' : 'Add item'}</h1>
+      <span class="spacer muted">${review ? `${left} left` : ''}</span>
     </header>
     <form class="editor" id="editor" novalidate>
       <section class="photo-box">
-        <div class="photo-preview" id="preview"></div>
-        <p class="muted status" id="status"></p>
+        <div class="photo-preview${review ? ' compact' : ''}" id="preview"></div>
+        <p class="muted status" id="status">${review ? 'Swipe the photo left to skip it for now.' : ''}</p>
+        ${review ? '' : `
         <div class="photo-actions">
           <label class="btn">Take photo<input type="file" accept="image/*" capture="environment" hidden id="camera"></label>
           <label class="btn">Choose photo<input type="file" accept="image/*" hidden id="library"></label>
         </div>
-        <label class="toggle"><input type="checkbox" id="removeBg" checked> Remove background</label>
+        <label class="toggle"><input type="checkbox" id="removeBg" checked> Remove background</label>`}
       </section>
 
       <fieldset>
@@ -274,18 +334,19 @@ async function renderEditor(id) {
         <div class="chips" id="f-pattern"></div>
       </fieldset>
 
-      <fieldset>
-        <legend>Details <span class="muted">(optional)</span></legend>
+      <details class="details" ${review ? '' : 'open'}>
+        <summary>Details <span class="muted">(optional)</span></summary>
         <label class="field">Fabric <input type="text" name="fabric"></label>
         <label class="field">Fit <input type="text" name="fit"></label>
         <label class="field">Brand <input type="text" name="brand"></label>
         <label class="field">Tags <input type="text" name="tags" placeholder="comma separated"></label>
         <label class="field">Notes <textarea name="notes" rows="3"></textarea></label>
-      </fieldset>
+      </details>
 
-      <div class="editor-actions">
+      <div class="editor-actions${review ? ' sticky' : ''}">
         ${existing ? `<button type="button" class="btn btn-danger" id="delete">Delete</button>` : ''}
-        <button type="submit" class="btn btn-primary" id="save">Save</button>
+        ${review ? `<button type="button" class="btn" id="skip">Skip</button>` : ''}
+        <button type="submit" class="btn btn-primary" id="save">${review ? 'Save &amp; next' : 'Save'}</button>
       </div>
     </form>`;
 
@@ -359,8 +420,27 @@ async function renderEditor(id) {
       $('#save').disabled = false;
     }
   }
-  $('#camera').onchange = onPhoto;
-  $('#library').onchange = onPhoto;
+  if (!review) {
+    $('#camera').onchange = onPhoto;
+    $('#library').onchange = onPhoto;
+  } else {
+    $('#skip').onclick = () => goToNextOrFinish(existing.id);
+    // Swipe left on the photo to skip.
+    let startX = null;
+    let startY = null;
+    const preview = $('#preview');
+    preview.addEventListener('touchstart', (e) => {
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+    }, { passive: true });
+    preview.addEventListener('touchend', (e) => {
+      if (startX === null) return;
+      const dx = e.changedTouches[0].clientX - startX;
+      const dy = e.changedTouches[0].clientY - startY;
+      startX = null;
+      if (dx < -60 && Math.abs(dx) > Math.abs(dy) * 1.5) goToNextOrFinish(existing.id);
+    });
+  }
 
   form.onsubmit = async (e) => {
     e.preventDefault();
@@ -384,14 +464,21 @@ async function renderEditor(id) {
     $('#save').textContent = 'Saving…';
     try {
       await store.saveItem(existing?.id ?? null, fields, images);
-      items = null;
+      // Patch the cached list instead of reloading it, so tagging many photos stays quick.
+      const cached = existing && !images && items?.find((i) => i.id === existing.id);
+      if (cached) Object.assign(cached, fields);
+      else items = null;
+      if (review) {
+        window.scrollTo(0, 0);
+        return goToNextOrFinish(existing.id);
+      }
       toast('Saved');
       location.hash = '#/';
     } catch (err) {
       console.error(err);
       toast('Save failed: ' + err.message, true);
       $('#save').disabled = false;
-      $('#save').textContent = 'Save';
+      $('#save').textContent = review ? 'Save & next' : 'Save';
     }
   };
 
@@ -400,8 +487,14 @@ async function renderEditor(id) {
       if (!confirm('Delete this item? This cannot be undone.')) return;
       try {
         await store.deleteItem(existing.id);
-        items = null;
         toast('Deleted');
+        if (review) {
+          const next = nextToTag(existing.id);
+          items = items.filter((i) => i.id !== existing.id);
+          location.hash = next ? `#/review/${encodeURIComponent(next.id)}` : '#/';
+          return;
+        }
+        items = null;
         location.hash = '#/';
       } catch (err) {
         toast('Delete failed: ' + err.message, true);
@@ -411,6 +504,99 @@ async function renderEditor(id) {
 
   paintPreview();
   paintChips();
+}
+
+// ---------- bulk import ----------
+
+const importDefaults = { seasons: [], occasions: [], removeBackground: true };
+
+async function renderImport() {
+  await loadItems();
+  const d = importDefaults;
+  const occasions = allOccasions();
+
+  app.innerHTML = `
+    <header class="topbar">
+      <a class="btn btn-ghost" href="#/">‹ Back</a>
+      <h1 class="title">Import photos</h1>
+      <span class="spacer"></span>
+    </header>
+    <div class="editor" id="import"></div>`;
+  const root = app.querySelector('#import');
+
+  function paint() {
+    if (!root.isConnected) return unsubscribe();
+    const st = importState;
+    if (st.running || st.finished) {
+      const pct = st.total ? Math.round(((st.done + st.failed.length) / st.total) * 100) : 0;
+      const toTag = st.running ? 0 : tagQueue().length;
+      root.innerHTML = `
+        <section class="import-progress">
+          <p><strong>${st.running ? 'Importing' : st.stopRequested ? 'Stopped' : 'Done'}:</strong>
+            ${st.done} of ${st.total} saved${st.failed.length ? `, ${st.failed.length} failed` : ''}</p>
+          <div class="progress"><div style="width:${pct}%"></div></div>
+          <p class="muted status">${esc(st.status)}</p>
+          ${st.running ? `<p class="muted small">Keep the app open with the screen on. You can browse the wardrobe meanwhile.</p>` : ''}
+          <div class="recent">${st.recent.map((u) => `<img src="${esc(u)}" alt="">`).join('')}</div>
+          ${st.failed.length ? `<details class="small"><summary>Photos that failed</summary><p>${st.failed.map(esc).join(', ')}</p></details>` : ''}
+          <div class="editor-actions">
+            ${st.running
+              ? `<button type="button" class="btn" id="stop" ${st.stopRequested ? 'disabled' : ''}>Stop</button>`
+              : `<button type="button" class="btn" id="again">Import more</button>
+                 ${toTag ? `<a class="btn btn-primary" href="#/review">Tag ${toTag} photo${toTag === 1 ? '' : 's'}</a>` : `<a class="btn btn-primary" href="#/">Done</a>`}`}
+          </div>
+        </section>`;
+      root.querySelector('#stop')?.addEventListener('click', stopImport);
+      root.querySelector('#again')?.addEventListener('click', () => {
+        importState.finished = false;
+        paint();
+      });
+      return;
+    }
+
+    root.innerHTML = `
+      <p class="muted">Pick as many photos as you like. Each gets its background removed and is saved
+        straight away; afterwards you tag them one by one.</p>
+      <fieldset>
+        <legend>Season for all of them <span class="muted">(optional)</span></legend>
+        <div class="chips">${SEASONS.map((s) => chip('seasons', s.key, s.label, d.seasons.includes(s.key))).join('')}</div>
+      </fieldset>
+      <fieldset>
+        <legend>Occasion for all of them <span class="muted">(optional)</span></legend>
+        <div class="chips">${occasions.map((o) => chip('occasions', o, capitalize(o), d.occasions.includes(o))).join('')}</div>
+      </fieldset>
+      <label class="toggle"><input type="checkbox" id="removeBg" ${d.removeBackground ? 'checked' : ''}> Remove backgrounds</label>
+      <div class="editor-actions">
+        <label class="btn btn-primary">Choose photos<input type="file" accept="image/*" multiple hidden id="files"></label>
+      </div>`;
+
+    root.onclick = (e) => {
+      const c = e.target.closest('.chip');
+      if (!c) return;
+      const list = d[c.dataset.group];
+      const v = c.dataset.value;
+      d[c.dataset.group] = list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
+      paint();
+    };
+    root.querySelector('#removeBg').onchange = (e) => (d.removeBackground = e.target.checked);
+    root.querySelector('#files').onchange = (e) => {
+      const files = [...e.target.files];
+      if (!files.length) return;
+      root.onclick = null;
+      if (d.removeBackground) warmUpBackgroundRemoval();
+      startImport(store, files, { ...d })
+        .catch((err) => toast('Import failed: ' + err.message, true))
+        .finally(async () => {
+          // Reload so the new photos (and the "to tag" count) show up.
+          items = null;
+          await loadItems().catch(() => {});
+          paint();
+        });
+    };
+  }
+
+  const unsubscribe = onImportProgress(paint);
+  paint();
 }
 
 // ---------- boot ----------

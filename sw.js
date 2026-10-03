@@ -1,6 +1,6 @@
 // Keeps the app shell available offline. Data and photos always come from the network.
 // Bump VERSION when shipping changes so phones pick up the new files.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL = [
   './',
   './index.html',
@@ -9,6 +9,7 @@ const SHELL = [
   './js/config.js',
   './js/taxonomy.js',
   './js/image.js',
+  './js/importer.js',
   './js/store-supabase.js',
   './js/store-local.js',
   './manifest.webmanifest',
