@@ -32,9 +32,10 @@ Open http://localhost:8080.
 ## Set up the cloud backend (Supabase)
 
 1. Create a project at https://supabase.com (the free tier is plenty for a few hundred items).
-2. **Database:** open SQL Editor, paste `supabase/migrations/20261003000000_init.sql`, run it.
-   This creates the `items` table, row-level security (each user only sees their own items)
-   and a private `photos` storage bucket.
+2. **Database:** open SQL Editor and run each file in `supabase/migrations/` in name order
+   (paste, Run). `20261003000000_init.sql` creates the `items` table, row-level security (each
+   user only sees their own items) and a private `photos` storage bucket;
+   `20261004000000_original_photo.sql` adds the columns that keep original photos.
 3. **App config:** Project Settings → API Keys. Copy the Project URL and the publishable key
    (`sb_publishable_…`, called the anon key in older projects) into `js/config.js`. That key is
    public by design. Never put the secret key (`sb_secret_…` / `service_role`) in the app.
@@ -82,6 +83,13 @@ the filters currently show, then **Edit**. Only what you pick changes: type, col
 replaced, seasons are replaced if you pick any, and occasions are added. The same sheet can delete the
 selection. Tip: *More filters → To tag* shows just the untagged photos.
 
+## Undoing background removal
+
+When the background is removed, the untouched photo is kept too. The item screen (and the tagging
+screen) shows a **Cut-out / Original** switch; the choice is saved with the item and decides which
+one the wardrobe shows. To switch many at once, use Select → Edit → Photo. Photos added before this
+feature have no original kept; re-pick the photo with "Remove background" unticked instead.
+
 ## Color suggestions
 
 When a photo is added or imported, the app guesses its main color from the cut-out (no AI service,
@@ -91,7 +99,8 @@ usually right; two-tone items get one of their colors and busy prints get *multi
 ## Backup
 
 **Download backup** at the bottom of the wardrobe saves a zip: `items.json` with every item's details
-and a `photos/` folder with each full-size photo (`photo_file` in the JSON points to it). On iPhone it
+and a `photos/` folder with each full-size photo (`photo_file` in the JSON points to it, and
+`original_file` to the untouched original when one was kept; `use_original` says which is shown). On iPhone it
 goes to the Files app. There's no restore button yet; the zip keeps everything needed to rebuild.
 
 ## Photo caching

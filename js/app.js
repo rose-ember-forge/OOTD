@@ -297,7 +297,8 @@ function paintSelectBar() {
 function openBatchSheet() {
   const ids = [...selection.ids];
   if (!ids.length) return;
-  const pick = { type: '', color: '', pattern: '', seasons: [], occasions: [] };
+  const pick = { type: '', color: '', pattern: '', seasons: [], occasions: [], photo: '' };
+  const withOriginal = ids.filter((id) => items.find((i) => i.id === id)?.original_photo_path).length;
   const sheet = document.createElement('div');
   sheet.className = 'sheet-backdrop';
   document.body.append(sheet);
@@ -322,6 +323,9 @@ function openBatchSheet() {
           <div class="chips">${SEASONS.map((x) => chip('seasons', x.key, x.label, pick.seasons.includes(x.key))).join('')}</div></fieldset>
         <fieldset><legend>Add occasion</legend>
           <div class="chips">${allOccasions().map((o) => chip('occasions', o, capitalize(o), pick.occasions.includes(o))).join('')}</div></fieldset>
+        ${withOriginal ? `
+        <fieldset><legend>Photo <span class="muted">(${withOriginal} of these ${withOriginal === 1 ? 'has' : 'have'} an original)</span></legend>
+          <div class="chips">${chip('photo', 'cutout', 'Cut-out', pick.photo === 'cutout')}${chip('photo', 'original', 'Original (undo background removal)', pick.photo === 'original')}</div></fieldset>` : ''}
         <div class="editor-actions">
           <button type="button" class="btn btn-danger" data-act="delete">Delete ${ids.length}</button>
           <button type="button" class="btn btn-primary" data-act="apply">Apply</button>
@@ -338,15 +342,19 @@ function openBatchSheet() {
       if (pick.pattern) fields.pattern = pick.pattern;
       if (pick.seasons.length) fields.seasons = pick.seasons;
       if (pick.occasions.length) fields.occasions = [...new Set([...(item.occasions ?? []), ...pick.occasions])];
+      // Only items that kept an original can switch photos.
+      if (pick.photo && item.original_photo_path) fields.use_original = pick.photo === 'original';
       return { id, fields };
-    });
-    if (!Object.keys(updates[0].fields).length) return toast('Pick something to change first.', true);
+    }).filter((u) => Object.keys(u.fields).length);
+    if (!updates.length) return toast('Pick something to change first.', true);
     button.disabled = true;
     button.textContent = 'Saving…';
     try {
       await store.updateItems(updates);
       for (const { id, fields } of updates) Object.assign(items.find((i) => i.id === id), fields);
-      toast(`Updated ${ids.length} item${plural}`);
+      // A photo switch changes grid thumbnails, so reload the list.
+      if (pick.photo) items = null;
+      toast(`Updated ${updates.length} item${updates.length === 1 ? '' : 's'}`);
     } catch (err) {
       // Some may have saved before the failure; reload to show the real state.
       toast('Saving failed: ' + err.message, true);
@@ -420,6 +428,12 @@ async function downloadBackup(e) {
           record.photo_file = `photos/${item.id}.${ext}`;
           // Photos are already compressed; storing them as-is keeps zipping fast.
           files[record.photo_file] = [new Uint8Array(await blob.arrayBuffer()), { level: 0 }];
+          record.use_original = !!item.use_original;
+          if (item.original_photo_path) {
+            const original = await store.downloadPhoto(item, 'original');
+            record.original_file = `photos/${item.id}-original.jpg`;
+            files[record.original_file] = [new Uint8Array(await original.arrayBuffer()), { level: 0 }];
+          }
         } catch (err) {
           console.warn('Photo missing from backup', item.id, err);
           record.photo_file = null;
@@ -497,7 +511,10 @@ async function renderEditor(id, { review = false } = {}) {
   const left = review ? tagQueue().length : 0;
   const draft = { ...EMPTY, ...(existing ?? {}) };
   let images = null; // set when a new photo was processed
-  let previewUrl = existing?.photoUrl ?? null;
+  // The two versions of the photo: the cut-out (or only photo) and, when the background was
+  // removed, the untouched original. `useOriginal` is which one the item shows.
+  const versions = { cutout: existing?.cutoutUrl ?? null, original: existing?.originalUrl ?? null };
+  let useOriginal = !!(existing?.use_original && versions.original);
   // Imported items only have a color if it was guessed from the photo.
   let colorGuessed = review && !!draft.color;
   const occasionChoices = allOccasions();
@@ -513,6 +530,10 @@ async function renderEditor(id, { review = false } = {}) {
     <form class="editor" id="editor" novalidate>
       <section class="photo-box">
         <div class="photo-preview${review ? ' compact' : ''}" id="preview"></div>
+        <div class="segmented" id="version" role="group" aria-label="Which photo to show" hidden>
+          <button type="button" data-version="cutout">Cut-out</button>
+          <button type="button" data-version="original">Original</button>
+        </div>
         <p class="muted status" id="status">${review ? 'Swipe the photo left to skip it for now.' : ''}</p>
         ${review ? '' : `
         <div class="photo-actions">
@@ -580,10 +601,21 @@ async function renderEditor(id, { review = false } = {}) {
   form.elements.tags.value = (draft.tags ?? []).join(', ');
 
   function paintPreview() {
-    $('#preview').innerHTML = previewUrl
-      ? `<img src="${esc(previewUrl)}" alt="Item photo" crossorigin="anonymous">`
+    const url = useOriginal ? versions.original : versions.cutout;
+    $('#preview').innerHTML = url
+      ? `<img src="${esc(url)}" alt="Item photo" crossorigin="anonymous">`
       : `<span class="muted">No photo yet</span>`;
+    $('#version').hidden = !versions.original;
+    for (const b of $('#version').querySelectorAll('button')) {
+      b.setAttribute('aria-pressed', String((b.dataset.version === 'original') === useOriginal));
+    }
   }
+  $('#version').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    useOriginal = b.dataset.version === 'original';
+    paintPreview();
+  };
 
   function paintChips() {
     $('#f-seasons').innerHTML = SEASONS.map((s) => chip('seasons', s.key, s.label, draft.seasons.includes(s.key))).join('');
@@ -632,8 +664,10 @@ async function renderEditor(id, { review = false } = {}) {
     $('#save').disabled = true;
     try {
       const result = await processPhoto(file, { removeBackground: $('#removeBg').checked, onStatus: setStatus });
-      images = { photo: result.photo, thumb: result.thumb };
-      previewUrl = URL.createObjectURL(result.photo);
+      images = { photo: result.photo, thumb: result.thumb, original: result.original };
+      versions.cutout = URL.createObjectURL(result.photo);
+      versions.original = result.original ? URL.createObjectURL(result.original.photo) : null;
+      useOriginal = false;
       paintPreview();
       if (result.color && (!draft.color || colorGuessed)) {
         draft.color = result.color;
@@ -687,15 +721,18 @@ async function renderEditor(id, { review = false } = {}) {
       brand: form.elements.brand.value.trim() || null,
       notes: form.elements.notes.value.trim() || null,
       tags: form.elements.tags.value.split(',').map((t) => t.trim()).filter(Boolean),
+      use_original: useOriginal && !!versions.original,
     };
     $('#save').disabled = true;
     $('#save').textContent = 'Saving…';
     try {
       await store.saveItem(existing?.id ?? null, fields, images);
       // Patch the cached list instead of reloading it, so tagging many photos stays quick.
+      // (Switching photo version changes the grid thumbnail, so that needs a reload.)
       const cached = existing && !images && items?.find((i) => i.id === existing.id);
-      if (cached) Object.assign(cached, fields);
+      if (cached && !!cached.use_original === fields.use_original) Object.assign(cached, fields);
       else items = null;
+      if (review && !items) await loadItems();
       if (review) {
         window.scrollTo(0, 0);
         return goToNextOrFinish(existing.id);

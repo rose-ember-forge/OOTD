@@ -95,14 +95,16 @@ function trimTransparent(source) {
 
 /**
  * Turn a picked file into the images we store.
- * Returns { photo, thumb, backgroundRemoved, color } where `color` is a suggested color name or null.
+ * Returns { photo, thumb, original, backgroundRemoved, color }: `original` ({ photo, thumb }) is the
+ * untouched photo when the background was removed (so a bad cut-out can be undone), else null;
+ * `color` is a suggested color name or null.
  * If background removal fails (old device, offline), the original photo is used.
  */
 export async function processPhoto(file, { removeBackground = true, onStatus = () => {} } = {}) {
   onStatus('Reading photo…');
-  const original = await decode(file);
-  const working = drawScaled(original, WORK_MAX);
-  original.close?.();
+  const decoded = await decode(file);
+  const working = drawScaled(decoded, WORK_MAX);
+  decoded.close?.();
 
   let source = working;
   let backgroundRemoved = false;
@@ -127,9 +129,12 @@ export async function processPhoto(file, { removeBackground = true, onStatus = (
   } catch (err) {
     console.warn('Color suggestion failed', err);
   }
-  const [photo, thumb] = await Promise.all([
+  const [photo, thumb, originalPhoto, originalThumb] = await Promise.all([
     encode(drawScaled(source, PHOTO_MAX), backgroundRemoved),
     encode(thumbCanvas, backgroundRemoved),
+    backgroundRemoved && encode(drawScaled(working, PHOTO_MAX), false),
+    backgroundRemoved && encode(drawScaled(working, THUMB_MAX), false),
   ]);
-  return { photo, thumb, backgroundRemoved, color };
+  const original = backgroundRemoved ? { photo: originalPhoto, thumb: originalThumb } : null;
+  return { photo, thumb, original, backgroundRemoved, color };
 }

@@ -30,7 +30,18 @@ export function createLocalStore() {
     if (!urls.has(blob)) urls.set(blob, URL.createObjectURL(blob));
     return urls.get(blob);
   };
-  const withUrls = (i) => ({ ...i, photoUrl: urlFor(i.photo), thumbUrl: urlFor(i.thumb) });
+  // Same shape as the cloud store: photo/thumb are the cut-out (or only photo), the
+  // original-* blobs the untouched photo, and `use_original` picks which one is shown.
+  const withUrls = (i) => {
+    const showOriginal = i.use_original && i.originalPhoto;
+    return {
+      ...i,
+      cutoutUrl: urlFor(i.photo),
+      originalUrl: urlFor(i.originalPhoto),
+      photoUrl: urlFor(showOriginal ? i.originalPhoto : i.photo),
+      thumbUrl: urlFor(showOriginal ? i.originalThumb : i.thumb),
+    };
+  };
 
   return {
     mode: 'demo',
@@ -64,7 +75,16 @@ export function createLocalStore() {
         created_at: existing?.created_at ?? now,
         updated_at: now,
       };
-      if (images) Object.assign(item, { photo: images.photo, thumb: images.thumb });
+      if (images) {
+        Object.assign(item, {
+          photo: images.photo,
+          thumb: images.thumb,
+          originalPhoto: images.original?.photo ?? null,
+          originalThumb: images.original?.thumb ?? null,
+          // Mirrors the cloud column, so the app can check for an original the same way.
+          original_photo_path: images.original ? 'local' : null,
+        });
+      }
       await tx(db, 'readwrite', (s) => s.put(item));
       return item.id;
     },
@@ -81,8 +101,9 @@ export function createLocalStore() {
       for (const id of ids) await this.deleteItem(id);
     },
 
-    async downloadPhoto(item) {
-      return (await tx(db, 'readonly', (s) => s.get(item.id))).photo;
+    async downloadPhoto(item, which = 'photo') {
+      const stored = await tx(db, 'readonly', (s) => s.get(item.id));
+      return which === 'original' ? stored.originalPhoto : stored.photo;
     },
   };
 }
