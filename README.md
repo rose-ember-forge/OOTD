@@ -37,12 +37,12 @@ Open http://localhost:8080.
 3. **App config:** Project Settings → API Keys. Copy the Project URL and the publishable key
    (`sb_publishable_…`, called the anon key in older projects) into `js/config.js`. That key is
    public by design. Never put the secret key (`sb_secret_…` / `service_role`) in the app.
-4. **Sign in:** Authentication → URL Configuration: set Site URL to where the app is hosted and add
-   it to Redirect URLs (also `http://localhost:8080` for testing).
-   - **Sign in with Apple** needs an Apple Developer account (paid). Create a Services ID and key in
-     the Apple developer portal, then enable the Apple provider in Authentication → Providers.
-     Supabase's guide: https://supabase.com/docs/guides/auth/social-login/auth-apple
-   - **Email link** works out of the box and is on the sign-in screen as a fallback.
+4. **Sign in:** the app signs in with an emailed link (Supabase's built-in email). In
+   Authentication → URL Configuration, set Site URL to where the app is hosted and add it to
+   Redirect URLs (also `http://localhost:8080` for testing).
+5. **Lock down sign-ups:** once everyone who needs an account has signed in once, turn off
+   "Allow new users to sign up" in Authentication → Sign In / Providers, so strangers who find the
+   site can't create accounts and use up your storage.
 
 ## Host it
 

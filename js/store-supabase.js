@@ -50,14 +50,6 @@ export function createSupabaseStore(url, anonKey) {
 
     userLabel: () => session?.user?.email ?? 'Signed in',
 
-    async signInWithApple() {
-      const { error } = await sb.auth.signInWithOAuth({
-        provider: 'apple',
-        options: { redirectTo: location.origin + location.pathname },
-      });
-      if (error) throw error;
-    },
-
     async signInWithEmail(email) {
       const { error } = await sb.auth.signInWithOtp({
         email,

@@ -74,24 +74,28 @@ function renderSignIn() {
   app.innerHTML = `
     <div class="signin">
       <h1 class="brand">Wardrobe</h1>
-      <p class="muted">Sign in once on each device to see the same wardrobe on your iPhone and Mac.</p>
-      <button class="btn btn-apple" id="apple">Sign in with Apple</button>
-      <details class="email-signin">
-        <summary>Use an email link instead</summary>
-        <form id="email-form">
-          <input type="email" name="email" required placeholder="you@example.com" autocomplete="email">
-          <button class="btn">Send link</button>
-        </form>
-      </details>
+      <p class="muted">Sign in once on each device to see the same wardrobe on your iPhone and Mac.
+        We'll email you a link; open it on the device you want to sign in on.</p>
+      <form id="email-form" class="email-signin">
+        <input type="email" name="email" required placeholder="you@example.com" autocomplete="email">
+        <button class="btn btn-primary">Email me a sign-in link</button>
+      </form>
+      <p class="muted small" id="sent" hidden></p>
     </div>`;
-  app.querySelector('#apple').onclick = () => store.signInWithApple().catch((e) => toast(e.message, true));
-  app.querySelector('#email-form').onsubmit = async (e) => {
+  const form = app.querySelector('#email-form');
+  form.onsubmit = async (e) => {
     e.preventDefault();
+    const button = form.querySelector('button');
+    button.disabled = true;
     try {
-      await store.signInWithEmail(e.target.email.value);
-      toast('Check your email for the sign-in link.');
+      await store.signInWithEmail(form.email.value.trim());
+      const sent = app.querySelector('#sent');
+      sent.textContent = `Link sent to ${form.email.value.trim()}. Check your inbox (and spam folder).`;
+      sent.hidden = false;
     } catch (err) {
       toast(err.message, true);
+    } finally {
+      button.disabled = false;
     }
   };
 }
