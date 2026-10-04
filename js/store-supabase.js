@@ -1,5 +1,6 @@
 // Cloud store: Supabase auth + Postgres table `items` + private storage bucket `photos`.
-// Photos live at `<user id>/<item id>/photo.<ext>` and `<user id>/<item id>/thumb.<ext>`.
+// Photos live at `<user id>/<item id>/photo-<time>.<ext>` and `.../thumb-<time>.<ext>`. The time
+// makes every upload a new path, so the service worker can cache photos by path forever.
 
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
@@ -60,6 +61,8 @@ export function createSupabaseStore(url, anonKey) {
 
     async signOut() {
       await sb.auth.signOut();
+      // Don't leave her photos cached on a device she has signed out of.
+      await caches?.delete('photos').catch(() => {});
     },
 
     async listItems() {
@@ -80,15 +83,48 @@ export function createSupabaseStore(url, anonKey) {
     async saveItem(id, fields, images) {
       const itemId = id ?? crypto.randomUUID();
       const row = { ...fields, id: itemId, user_id: userId() };
+      let oldPaths = [];
       if (images) {
+        if (id) {
+          const { data } = await sb.from('items').select('photo_path, thumb_path').eq('id', id).single();
+          oldPaths = [data?.photo_path, data?.thumb_path].filter(Boolean);
+        }
         const base = `${userId()}/${itemId}`;
-        row.photo_path = `${base}/photo.${ext(images.photo)}`;
-        row.thumb_path = `${base}/thumb.${ext(images.thumb)}`;
+        const stamp = Date.now();
+        row.photo_path = `${base}/photo-${stamp}.${ext(images.photo)}`;
+        row.thumb_path = `${base}/thumb-${stamp}.${ext(images.thumb)}`;
         await Promise.all([upload(row.photo_path, images.photo), upload(row.thumb_path, images.thumb)]);
       }
       const { error } = await sb.from('items').upsert(row);
       if (error) throw error;
+      // The replaced photo's files are no longer referenced.
+      if (oldPaths.length) await sb.storage.from(BUCKET).remove(oldPaths);
       return itemId;
+    },
+
+    // `updates`: [{ id, fields }]. A few at a time, to stay friendly to the free tier.
+    async updateItems(updates) {
+      for (let i = 0; i < updates.length; i += 8) {
+        const results = await Promise.all(
+          updates.slice(i, i + 8).map(({ id, fields }) => sb.from('items').update(fields).eq('id', id)),
+        );
+        const failed = results.find((r) => r.error);
+        if (failed) throw failed.error;
+      }
+    },
+
+    async deleteItems(ids) {
+      const { data } = await sb.from('items').select('photo_path, thumb_path').in('id', ids);
+      const { error } = await sb.from('items').delete().in('id', ids);
+      if (error) throw error;
+      const paths = (data ?? []).flatMap((r) => [r.photo_path, r.thumb_path]).filter(Boolean);
+      if (paths.length) await sb.storage.from(BUCKET).remove(paths);
+    },
+
+    async downloadPhoto(item) {
+      const { data, error } = await sb.storage.from(BUCKET).download(item.photo_path);
+      if (error) throw error;
+      return data;
     },
 
     async deleteItem(id) {

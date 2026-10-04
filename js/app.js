@@ -13,6 +13,8 @@ let items = null; // cached list; null means "needs loading"
 let itemsLoadedAt = 0;
 const ITEMS_MAX_AGE = 45 * 60 * 1000; // photo links from the cloud expire after an hour
 const filters = { seasons: new Set(), occasions: new Set(), types: new Set(), colors: new Set(), q: '', more: false };
+const selection = { on: false, ids: new Set() }; // grid select mode, for editing many items at once
+const UNTAGGED = '__none'; // type filter value for items without a type
 
 // ---------- helpers ----------
 
@@ -110,7 +112,7 @@ function matches(item) {
     if (!s.includes('all_year') && !s.some((x) => f.seasons.has(x))) return false;
   }
   if (f.occasions.size && !(item.occasions ?? []).some((o) => f.occasions.has(o))) return false;
-  if (f.types.size && !f.types.has(item.type)) return false;
+  if (f.types.size && !f.types.has(item.type || UNTAGGED)) return false;
   if (f.colors.size && !f.colors.has(item.color)) return false;
   if (f.q) {
     const hay = [item.type, item.subtype, item.color, item.pattern, item.fabric, item.fit, item.brand, item.notes, ...(item.tags ?? [])]
@@ -141,10 +143,15 @@ async function renderGrid() {
     ${toTag ? `<a class="banner banner-link" href="#/review"><span><strong>${toTag}</strong> photo${toTag === 1 ? '' : 's'} to tag</span><span>Start ›</span></a>` : ''}
     <section class="filters" id="filters"></section>
     <main class="grid" id="grid"></main>
+    <div class="selectbar" id="selectbar" hidden></div>
     <footer class="footer muted">
       <span>${esc(store.userLabel())}</span>
+      ${items.length ? `<button type="button" class="link" id="backup">Download backup</button>` : ''}
       ${store.mode === 'cloud' ? `<button type="button" class="link" id="signout">Sign out</button>` : ''}
     </footer>`;
+  selection.on = false;
+  selection.ids.clear();
+  app.querySelector('#backup')?.addEventListener('click', downloadBackup);
 
   const pill = app.querySelector('#import-pill');
   const paintPill = () => {
@@ -181,9 +188,11 @@ function renderFilters() {
       <button type="button" class="link" id="more">${f.more ? 'Fewer filters' : 'More filters'}</button>
       ${activeFilterCount() ? `<button type="button" class="link" id="clear">Clear all</button>` : ''}
       <span class="muted count" id="count"></span>
+      ${items.length ? `<button type="button" class="link" id="select">${selection.on ? 'Done' : 'Select'}</button>` : ''}
     </div>
     ${f.more ? `
       <div class="filter-row" aria-label="Type">
+        ${items.some(needsTagging) ? chip('types', UNTAGGED, 'To tag', f.types.has(UNTAGGED)) : ''}
         ${TYPES.map((t) => chip('types', t.key, t.label, f.types.has(t.key))).join('')}
       </div>
       <div class="filter-row" aria-label="Color">
@@ -199,6 +208,7 @@ function renderFilters() {
       return renderFilters(), renderCards();
     }
     if (e.target.id === 'more') return (filters.more = !filters.more), renderFilters();
+    if (e.target.id === 'select') return setSelecting(!selection.on);
     if (e.target.id === 'clear') {
       ['seasons', 'occasions', 'types', 'colors'].forEach((k) => filters[k].clear());
       filters.q = '';
@@ -230,12 +240,217 @@ function renderCards() {
   grid.innerHTML = shown
     .map(
       (i) => `
-      <a class="card" href="#/item/${encodeURIComponent(i.id)}">
-        <div class="card-img">${i.thumbUrl ? `<img src="${esc(i.thumbUrl)}" alt="" loading="lazy">` : ''}</div>
+      <a class="card${selection.ids.has(i.id) ? ' selected' : ''}" href="#/item/${encodeURIComponent(i.id)}" data-id="${esc(i.id)}">
+        <div class="card-img">${selection.on ? `<span class="check" aria-hidden="true">${selection.ids.has(i.id) ? '✓' : ''}</span>` : ''}${i.thumbUrl ? `<img src="${esc(i.thumbUrl)}" alt="" loading="lazy" crossorigin="anonymous">` : ''}</div>
         <div class="card-label">${needsTagging(i) ? '<span class="to-tag">To tag</span>' : esc(capitalize(i.subtype || typeLabel(i.type)))}</div>
       </a>`,
     )
     .join('');
+  grid.classList.toggle('selecting', selection.on);
+  grid.onclick = (e) => {
+    const card = e.target.closest('.card');
+    if (!card || !selection.on) return;
+    e.preventDefault();
+    const id = card.dataset.id;
+    const on = !selection.ids.has(id);
+    on ? selection.ids.add(id) : selection.ids.delete(id);
+    // Update just this card; redrawing a grid of hundreds on every tap would be sluggish.
+    card.classList.toggle('selected', on);
+    card.querySelector('.check').textContent = on ? '✓' : '';
+    paintSelectBar();
+  };
+}
+
+// ---------- select many + edit together ----------
+
+function setSelecting(on) {
+  selection.on = on;
+  selection.ids.clear();
+  renderFilters();
+  renderCards();
+  paintSelectBar();
+}
+
+function paintSelectBar() {
+  const bar = app.querySelector('#selectbar');
+  if (!bar) return;
+  bar.hidden = !selection.on;
+  if (!selection.on) return;
+  const n = selection.ids.size;
+  bar.innerHTML = `
+    <span>${n} selected</span>
+    <button type="button" class="link" id="sel-all" title="Select everything currently shown">All</button>
+    <span class="spacer-flex"></span>
+    <button type="button" class="btn" id="sel-cancel">Cancel</button>
+    <button type="button" class="btn btn-primary" id="sel-edit" ${n ? '' : 'disabled'}>Edit ${n || ''}</button>`;
+  bar.querySelector('#sel-all').onclick = () => {
+    items.filter(matches).forEach((i) => selection.ids.add(i.id));
+    renderCards();
+    paintSelectBar();
+  };
+  bar.querySelector('#sel-cancel').onclick = () => setSelecting(false);
+  bar.querySelector('#sel-edit').onclick = openBatchSheet;
+}
+
+// Only the fields she touches are changed. Type, color and pattern are replaced;
+// seasons are replaced if any are picked; occasions are added to what each item has.
+function openBatchSheet() {
+  const ids = [...selection.ids];
+  if (!ids.length) return;
+  const pick = { type: '', color: '', pattern: '', seasons: [], occasions: [] };
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet-backdrop';
+  document.body.append(sheet);
+  const close = () => sheet.remove();
+  const plural = ids.length === 1 ? '' : 's';
+
+  function paint() {
+    sheet.innerHTML = `
+      <div class="sheet" role="dialog" aria-label="Edit ${ids.length} items">
+        <div class="sheet-head">
+          <strong>Edit ${ids.length} item${plural}</strong>
+          <button type="button" class="btn btn-ghost" data-act="close">Close</button>
+        </div>
+        <p class="muted small">Only what you pick here changes. Everything else stays as it is.</p>
+        <fieldset><legend>Type</legend>
+          <div class="chips">${TYPES.map((t) => chip('type', t.key, t.label, pick.type === t.key)).join('')}</div></fieldset>
+        <fieldset><legend>Color</legend>
+          <div class="chips">${COLORS.map((c) => chip('color', c, colorDot(c) + capitalize(c), pick.color === c)).join('')}</div></fieldset>
+        <fieldset><legend>Pattern</legend>
+          <div class="chips">${PATTERNS.map((x) => chip('pattern', x, capitalize(x), pick.pattern === x)).join('')}</div></fieldset>
+        <fieldset><legend>Season <span class="muted">(replaces their seasons)</span></legend>
+          <div class="chips">${SEASONS.map((x) => chip('seasons', x.key, x.label, pick.seasons.includes(x.key))).join('')}</div></fieldset>
+        <fieldset><legend>Add occasion</legend>
+          <div class="chips">${allOccasions().map((o) => chip('occasions', o, capitalize(o), pick.occasions.includes(o))).join('')}</div></fieldset>
+        <div class="editor-actions">
+          <button type="button" class="btn btn-danger" data-act="delete">Delete ${ids.length}</button>
+          <button type="button" class="btn btn-primary" data-act="apply">Apply</button>
+        </div>
+      </div>`;
+  }
+
+  async function applyChanges(button) {
+    const updates = ids.map((id) => {
+      const item = items.find((i) => i.id === id);
+      const fields = {};
+      if (pick.type) fields.type = pick.type;
+      if (pick.color) fields.color = pick.color;
+      if (pick.pattern) fields.pattern = pick.pattern;
+      if (pick.seasons.length) fields.seasons = pick.seasons;
+      if (pick.occasions.length) fields.occasions = [...new Set([...(item.occasions ?? []), ...pick.occasions])];
+      return { id, fields };
+    });
+    if (!Object.keys(updates[0].fields).length) return toast('Pick something to change first.', true);
+    button.disabled = true;
+    button.textContent = 'Saving…';
+    try {
+      await store.updateItems(updates);
+      for (const { id, fields } of updates) Object.assign(items.find((i) => i.id === id), fields);
+      toast(`Updated ${ids.length} item${plural}`);
+    } catch (err) {
+      // Some may have saved before the failure; reload to show the real state.
+      toast('Saving failed: ' + err.message, true);
+      items = null;
+    }
+    close();
+    renderGrid();
+  }
+
+  async function deleteSelected(button) {
+    if (!confirm(`Delete ${ids.length} item${plural}? This cannot be undone.`)) return;
+    button.disabled = true;
+    try {
+      await store.deleteItems(ids);
+      items = items.filter((i) => !ids.includes(i.id));
+      toast(`Deleted ${ids.length}`);
+    } catch (err) {
+      toast('Delete failed: ' + err.message, true);
+      items = null;
+    }
+    close();
+    renderGrid();
+  }
+
+  sheet.onclick = (e) => {
+    if (e.target === sheet) return close();
+    const c = e.target.closest('.chip');
+    if (c) {
+      const { group, value } = c.dataset;
+      if (Array.isArray(pick[group])) {
+        pick[group] = pick[group].includes(value) ? pick[group].filter((x) => x !== value) : [...pick[group], value];
+      } else {
+        pick[group] = pick[group] === value ? '' : value;
+      }
+      return paint();
+    }
+    const button = e.target.closest('[data-act]');
+    if (button?.dataset.act === 'close') close();
+    if (button?.dataset.act === 'delete') deleteSelected(button);
+    if (button?.dataset.act === 'apply') applyChanges(button);
+  };
+  paint();
+}
+
+// ---------- backup ----------
+
+const BACKUP_FIELDS = [
+  'id', 'created_at', 'updated_at', 'seasons', 'occasions', 'type', 'subtype',
+  'color', 'pattern', 'fabric', 'fit', 'brand', 'notes', 'tags',
+];
+
+// Everything she has entered plus each full-size photo, as one zip file.
+async function downloadBackup(e) {
+  const button = e.target;
+  if (importState.running) return toast('Wait for the import to finish first.', true);
+  button.disabled = true;
+  const status = (t) => (button.textContent = t);
+  try {
+    status('Preparing…');
+    const { zipSync } = await import('https://cdn.jsdelivr.net/npm/fflate@0.8.2/+esm');
+    const all = await loadItems(true);
+    const files = {};
+    const records = [];
+    const queue = [...all];
+    const worker = async () => {
+      for (let item = queue.shift(); item; item = queue.shift()) {
+        const record = Object.fromEntries(BACKUP_FIELDS.map((k) => [k, item[k] ?? null]));
+        try {
+          const blob = await store.downloadPhoto(item);
+          const ext = blob.type === 'image/png' ? 'png' : blob.type === 'image/webp' ? 'webp' : 'jpg';
+          record.photo_file = `photos/${item.id}.${ext}`;
+          // Photos are already compressed; storing them as-is keeps zipping fast.
+          files[record.photo_file] = [new Uint8Array(await blob.arrayBuffer()), { level: 0 }];
+        } catch (err) {
+          console.warn('Photo missing from backup', item.id, err);
+          record.photo_file = null;
+        }
+        records.push(record);
+        status(`Saving photos… ${records.length} of ${all.length}`);
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    records.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    const json = JSON.stringify({ app: 'wardrobe', version: 1, exported_at: new Date().toISOString(), items: records }, null, 2);
+    files['items.json'] = new TextEncoder().encode(json);
+    status('Zipping…');
+    const zip = zipSync(files);
+    const url = URL.createObjectURL(new Blob([zip], { type: 'application/zip' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `wardrobe-backup-${new Date().toISOString().slice(0, 10)}.zip`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    const missing = records.filter((r) => !r.photo_file).length;
+    toast(missing ? `Backup saved; ${missing} photo${missing === 1 ? '' : 's'} could not be included.` : 'Backup saved');
+  } catch (err) {
+    console.error(err);
+    toast('Backup failed: ' + err.message, true);
+  } finally {
+    button.disabled = false;
+    status('Download backup');
+  }
 }
 
 // ---------- add / edit ----------
@@ -283,6 +498,8 @@ async function renderEditor(id, { review = false } = {}) {
   const draft = { ...EMPTY, ...(existing ?? {}) };
   let images = null; // set when a new photo was processed
   let previewUrl = existing?.photoUrl ?? null;
+  // Imported items only have a color if it was guessed from the photo.
+  let colorGuessed = review && !!draft.color;
   const occasionChoices = allOccasions();
 
   if (!review) warmUpBackgroundRemoval();
@@ -329,7 +546,7 @@ async function renderEditor(id, { review = false } = {}) {
       </fieldset>
 
       <fieldset>
-        <legend>Color</legend>
+        <legend>Color <span class="hint" id="color-hint" hidden>guessed from the photo</span></legend>
         <div class="chips" id="f-color"></div>
       </fieldset>
 
@@ -364,7 +581,7 @@ async function renderEditor(id, { review = false } = {}) {
 
   function paintPreview() {
     $('#preview').innerHTML = previewUrl
-      ? `<img src="${esc(previewUrl)}" alt="Item photo">`
+      ? `<img src="${esc(previewUrl)}" alt="Item photo" crossorigin="anonymous">`
       : `<span class="muted">No photo yet</span>`;
   }
 
@@ -377,6 +594,7 @@ async function renderEditor(id, { review = false } = {}) {
     $('#f-pattern').innerHTML = PATTERNS.map((p) => chip('pattern', p, capitalize(p), draft.pattern === p)).join('');
     const subs = TYPES.find((t) => t.key === draft.type)?.subtypes ?? TYPES.flatMap((t) => t.subtypes);
     $('#subtypes').innerHTML = subs.map((s) => `<option value="${esc(s)}">`).join('');
+    $('#color-hint').hidden = !colorGuessed;
   }
 
   form.addEventListener('click', (e) => {
@@ -388,6 +606,7 @@ async function renderEditor(id, { review = false } = {}) {
       draft[group] = list.includes(value) ? list.filter((x) => x !== value) : [...list, value];
     } else {
       draft[group] = draft[group] === value ? '' : value;
+      if (group === 'color') colorGuessed = false;
     }
     paintChips();
   });
@@ -416,6 +635,11 @@ async function renderEditor(id, { review = false } = {}) {
       images = { photo: result.photo, thumb: result.thumb };
       previewUrl = URL.createObjectURL(result.photo);
       paintPreview();
+      if (result.color && (!draft.color || colorGuessed)) {
+        draft.color = result.color;
+        colorGuessed = true;
+        paintChips();
+      }
       setStatus(result.backgroundRemoved || !$('#removeBg').checked ? '' : 'Background removal unavailable; kept the original photo.');
     } catch (err) {
       console.error(err);
@@ -624,7 +848,7 @@ async function boot() {
   window.addEventListener('hashchange', route);
   route();
 
-  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
 }

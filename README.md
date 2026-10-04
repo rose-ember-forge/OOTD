@@ -12,6 +12,7 @@ index.html, css/, js/          the app
   js/store-supabase.js         cloud data: auth, items table, photo storage
   js/store-local.js            demo data in the browser (IndexedDB)
   js/image.js                  resize, background removal, thumbnails
+  js/color.js                  guesses the main color from a photo (on the device)
   js/importer.js               bulk import runner
 sw.js, manifest.webmanifest    install-to-home-screen + offline app shell
 supabase/migrations/           database table, security rules, photo bucket
@@ -73,6 +74,32 @@ while it runs; you can browse the wardrobe meanwhile.
 Imported photos have no type yet and show as *To tag*. **Tag photos** steps through them one by
 one: pick type, color and pattern, then **Save & next**. **Skip** (or swiping the photo left) leaves a
 photo for later.
+
+## Editing many at once
+
+**Select** (next to the item count) turns on select mode: tap items, or **All** to take everything
+the filters currently show, then **Edit**. Only what you pick changes: type, color and pattern are
+replaced, seasons are replaced if you pick any, and occasions are added. The same sheet can delete the
+selection. Tip: *More filters → To tag* shows just the untagged photos.
+
+## Color suggestions
+
+When a photo is added or imported, the app guesses its main color from the cut-out (no AI service,
+nothing leaves the phone) and pre-selects it with a *guessed from the photo* note. Solid colors are
+usually right; two-tone items get one of their colors and busy prints get *multicolor*.
+
+## Backup
+
+**Download backup** at the bottom of the wardrobe saves a zip: `items.json` with every item's details
+and a `photos/` folder with each full-size photo (`photo_file` in the JSON points to it). On iPhone it
+goes to the Files app. There's no restore button yet; the zip keeps everything needed to rebuild.
+
+## Photo caching
+
+Photos are fetched through private links that change every hour. The service worker keeps each photo
+on the device keyed by its storage path instead, so the wardrobe opens from the device after the
+first view and uses less of Supabase's free data allowance. Every upload gets a new file name, so a
+replaced photo never shows a stale copy. Signing out clears the cached photos.
 
 ## Not built yet
 

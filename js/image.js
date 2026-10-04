@@ -2,6 +2,8 @@
 // Background removal runs on the device (@imgly/background-removal); its model is
 // downloaded on first use (tens of MB) and cached by the browser afterwards.
 
+import { suggestColor } from './color.js';
+
 const PHOTO_MAX = 1200;
 const THUMB_MAX = 400;
 const WORK_MAX = 1600;
@@ -93,7 +95,7 @@ function trimTransparent(source) {
 
 /**
  * Turn a picked file into the images we store.
- * Returns { photo, thumb, backgroundRemoved }.
+ * Returns { photo, thumb, backgroundRemoved, color } where `color` is a suggested color name or null.
  * If background removal fails (old device, offline), the original photo is used.
  */
 export async function processPhoto(file, { removeBackground = true, onStatus = () => {} } = {}) {
@@ -118,9 +120,16 @@ export async function processPhoto(file, { removeBackground = true, onStatus = (
   }
 
   onStatus('Saving sizes…');
+  const thumbCanvas = drawScaled(source, THUMB_MAX);
+  let color = null;
+  try {
+    color = suggestColor(thumbCanvas, backgroundRemoved);
+  } catch (err) {
+    console.warn('Color suggestion failed', err);
+  }
   const [photo, thumb] = await Promise.all([
     encode(drawScaled(source, PHOTO_MAX), backgroundRemoved),
-    encode(drawScaled(source, THUMB_MAX), backgroundRemoved),
+    encode(thumbCanvas, backgroundRemoved),
   ]);
-  return { photo, thumb, backgroundRemoved };
+  return { photo, thumb, backgroundRemoved, color };
 }

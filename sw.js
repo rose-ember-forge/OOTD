@@ -1,6 +1,8 @@
-// Keeps the app shell available offline. Data and photos always come from the network.
+// Keeps the app shell available offline, and keeps photos on the device once seen.
+// Item data always comes from the network.
 // Bump VERSION when shipping changes so phones pick up the new files.
-const VERSION = 'v3';
+const VERSION = 'v4';
+const PHOTO_CACHE = 'photos';
 const SHELL = [
   './',
   './index.html',
@@ -9,6 +11,7 @@ const SHELL = [
   './js/config.js',
   './js/taxonomy.js',
   './js/image.js',
+  './js/color.js',
   './js/importer.js',
   './js/store-supabase.js',
   './js/store-local.js',
@@ -23,15 +26,33 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION && k !== PHOTO_CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });
 
-// Network first for our own files, falling back to the cache when offline.
+// Photos are signed links whose token changes every time the list loads, but the file at a
+// path never changes (each upload gets a new path). So cache by path, ignoring the token.
+const isPhoto = (url) => url.pathname.includes('/storage/v1/object/sign/photos/');
+
+async function cachedPhoto(request) {
+  const url = new URL(request.url);
+  const key = url.origin + url.pathname;
+  const cache = await caches.open(PHOTO_CACHE);
+  const hit = await cache.match(key);
+  if (hit) return hit;
+  const res = await fetch(request);
+  if (res.ok && res.type !== 'opaque') await cache.put(key, res.clone());
+  return res;
+}
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin) return;
+  if (e.request.method !== 'GET') return;
+  if (isPhoto(url)) return e.respondWith(cachedPhoto(e.request));
+  if (url.origin !== location.origin) return;
+
+  // Network first for our own files, falling back to the cache when offline.
   e.respondWith(
     fetch(e.request)
       .then((res) => {

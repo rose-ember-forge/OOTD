@@ -101,7 +101,7 @@ export async function startImport(store, files, defaults) {
 
       // Upload in the background while the next photo is processed.
       const upload = store
-        .saveItem(null, fields, { photo: images.photo, thumb: images.thumb })
+        .saveItem(null, { ...fields, color: images.color }, { photo: images.photo, thumb: images.thumb })
         .then(() => {
           importState.done++;
           importState.recent.unshift(URL.createObjectURL(images.thumb));

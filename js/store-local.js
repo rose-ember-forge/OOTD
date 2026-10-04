@@ -72,5 +72,17 @@ export function createLocalStore() {
     async deleteItem(id) {
       await tx(db, 'readwrite', (s) => s.delete(id));
     },
+
+    async updateItems(updates) {
+      for (const { id, fields } of updates) await this.saveItem(id, fields, null);
+    },
+
+    async deleteItems(ids) {
+      for (const id of ids) await this.deleteItem(id);
+    },
+
+    async downloadPhoto(item) {
+      return (await tx(db, 'readonly', (s) => s.get(item.id))).photo;
+    },
   };
 }
