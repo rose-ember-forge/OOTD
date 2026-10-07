@@ -36,7 +36,10 @@ covering every type, sleeve and length, spread so every season and occasion has 
 
 The sign-in screen sends an email link, or (under *Use a password instead*) takes a password. Set
 a password once while signed in, with **Set password** at the bottom of the wardrobe; after that,
-signing in on any device or on localhost needs no email. Supabase's built-in email only sends a
+signing in on any device or on localhost needs no email. The link only shows while the account has
+no password; if someone with a password signs in by email link (a forgotten password, say), it
+shows as **Reset password** instead. Supabase doesn't expose whether an account has a password, so
+the app records `has_password` in the account's metadata when one is set or used to sign in. Supabase's built-in email only sends a
 few messages an hour, so the password route is the one to use while developing.
 
 ## Set up the cloud backend (Supabase)

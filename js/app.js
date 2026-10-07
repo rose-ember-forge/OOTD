@@ -194,10 +194,10 @@ async function renderGrid() {
       <span>${esc(store.userLabel())}</span>
       ${items.length ? `<button type="button" class="link" id="backup">Download backup</button>` : ''}
       ${store.mode === 'demo' ? `<button type="button" class="link" id="reset-samples">Reset sample items</button>` : ''}
-      ${store.mode === 'cloud' ? `<button type="button" class="link" id="set-password">Set password</button>` : ''}
+      ${passwordLink()}
       ${store.mode === 'cloud' ? `<button type="button" class="link" id="signout">Sign out</button>` : ''}
     </footer>`;
-  app.querySelector('#set-password')?.addEventListener('click', openPasswordSheet);
+  app.querySelector('#set-password')?.addEventListener('click', () => openPasswordSheet(store.passwordAction()));
   app.querySelector('#reset-samples')?.addEventListener('click', async () => {
     if (!confirm('Replace everything in demo mode with the sample items?')) return;
     app.innerHTML = loader('Setting up sample items…');
@@ -494,14 +494,22 @@ function openBatchSheet() {
 
 // ---------- password ----------
 
+// Shown only when it's useful: no password yet, or signed in by email link (likely forgotten).
+function passwordLink() {
+  const action = store.mode === 'cloud' && store.passwordAction();
+  if (!action) return '';
+  return `<button type="button" class="link" id="set-password">${action === 'reset' ? 'Reset password' : 'Set password'}</button>`;
+}
+
 // Lets her (or you) sign in with a password next time instead of an emailed link.
-function openPasswordSheet() {
+function openPasswordSheet(action) {
+  const title = action === 'reset' ? 'Choose a new password' : 'Set a password';
   const sheet = document.createElement('div');
   sheet.className = 'sheet-backdrop';
   sheet.innerHTML = `
-    <form class="sheet" role="dialog" aria-label="Set password">
+    <form class="sheet" role="dialog" aria-label="${title}">
       <div class="sheet-head">
-        <strong>Set a password</strong>
+        <strong>${title}</strong>
         <button type="button" class="btn btn-ghost" data-act="close">Close</button>
       </div>
       <p class="muted small">Then you can sign in with ${esc(store.userLabel())} and this password, without waiting for an email.</p>
@@ -522,6 +530,10 @@ function openPasswordSheet() {
       await store.setPassword(form.password.value);
       toast('Password saved');
       sheet.remove();
+      // It now has a password, so the link may no longer apply.
+      const link = app.querySelector('#set-password');
+      if (link) link.outerHTML = passwordLink();
+      app.querySelector('#set-password')?.addEventListener('click', () => openPasswordSheet(store.passwordAction()));
     } catch (err) {
       toast(err.message, true);
       button.disabled = false;

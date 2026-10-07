@@ -14,8 +14,19 @@ export function createSupabaseStore(url, anonKey) {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
   });
   let session = null;
+  let passwordJustSet = false;
 
   const userId = () => session?.user?.id;
+
+  // How this session was signed in ('password', 'otp', 'magiclink', …), from the access token.
+  function signedInWith(method) {
+    try {
+      const payload = JSON.parse(atob(session.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      return (payload.amr ?? []).some((a) => a.method === method);
+    } catch {
+      return false;
+    }
+  }
   const ext = (blob) => (blob.type === 'image/png' ? 'png' : blob.type === 'image/webp' ? 'webp' : 'jpg');
 
   async function signUrls(paths) {
@@ -59,6 +70,16 @@ export function createSupabaseStore(url, anonKey) {
 
     userLabel: () => session?.user?.email ?? 'Signed in',
 
+    // What the password link should offer: 'set' (no password yet), 'reset' (has one, but
+    // signed in by email link, so may have forgotten it) or null (signed in with it).
+    // Supabase doesn't say whether an account has a password, so the app records it in the
+    // account's metadata when one is set or used.
+    passwordAction() {
+      const hasPassword = session?.user?.user_metadata?.has_password || signedInWith('password');
+      if (!hasPassword) return 'set';
+      return signedInWith('password') || passwordJustSet ? null : 'reset';
+    },
+
     async signInWithEmail(email) {
       const { error } = await sb.auth.signInWithOtp({
         email,
@@ -69,14 +90,20 @@ export function createSupabaseStore(url, anonKey) {
 
     // Password sign-in needs no email, so it doesn't count against Supabase's email limit.
     async signInWithPassword(email, password) {
-      const { error } = await sb.auth.signInWithPassword({ email, password });
+      const { data, error } = await sb.auth.signInWithPassword({ email, password });
       if (error) throw error;
+      // Accounts given a password before it was recorded get the note on their next sign-in.
+      if (!data.user?.user_metadata?.has_password) {
+        sb.auth.updateUser({ data: { has_password: true } }).catch(() => {});
+      }
     },
 
     // Sets (or changes) the password of the signed-in account.
     async setPassword(password) {
-      const { error } = await sb.auth.updateUser({ password });
+      const { data, error } = await sb.auth.updateUser({ password, data: { has_password: true } });
       if (error) throw error;
+      if (session && data.user) session = { ...session, user: data.user };
+      passwordJustSet = true;
     },
 
     async signOut() {
