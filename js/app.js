@@ -36,6 +36,10 @@ function toast(msg, isError = false) {
 const chip = (group, value, label, on, extra = '') =>
   `<button type="button" class="chip${on ? ' on' : ''}" data-group="${group}" data-value="${esc(value)}" aria-pressed="${on}" ${extra}>${label}</button>`;
 
+// The swinging-hanger loading screen (same markup as the first paint in index.html).
+const loader = (text) =>
+  `<div class="loader" role="status"><svg class="loader-hanger" viewBox="80 60 352 300" aria-hidden="true"><g><path d="M256 150a34 34 0 1 1 34-34"/><path d="M256 150v24L106 300c-16 13-7 38 13 38h274c20 0 29-25 13-38L256 174"/></g></svg><p>${text}</p></div>`;
+
 const colorDot = (c) => `<span class="dot" style="background:${COLOR_SWATCH[c] ?? '#ccc'}"></span>`;
 
 function allOccasions() {
@@ -143,7 +147,7 @@ const activeFilterCount = () =>
   SET_FILTERS.reduce((n, k) => n + filters[k].size, 0) + (filters.q ? 1 : 0);
 
 async function renderGrid() {
-  app.innerHTML = `<div class="page"><p class="muted">Loading…</p></div>`;
+  app.innerHTML = loader('Loading your wardrobe…');
   await loadItems();
   const toTag = items.filter(needsTagging).length;
   app.innerHTML = `
@@ -529,7 +533,7 @@ function goToNextOrFinish(id) {
 
 // `review`: tagging imported photos one after another (Save & next, Skip, swipe to skip).
 async function renderEditor(id, { review = false } = {}) {
-  app.innerHTML = `<div class="page"><p class="muted">Loading…</p></div>`;
+  app.innerHTML = loader('Loading…');
   await loadItems();
   const existing = id ? await store.getItem(id) : null;
   const left = review ? tagQueue().length : 0;

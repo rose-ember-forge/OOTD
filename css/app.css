@@ -353,3 +353,38 @@ legend { font-weight: 600; margin-bottom: 8px; padding: 0; }
 /* "All year" picks all four seasons; styled as a shortcut rather than a fifth value. */
 .chip.shortcut { border-style: dashed; color: var(--muted); }
 .chip.shortcut.on { background: var(--surface); border-color: var(--chip-on); color: var(--text); }
+
+/* ---------- loading screen: the hanger swings on its hook ---------- */
+.loader {
+  min-height: 70vh;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 18px;
+  color: var(--muted);
+  /* Fast loads finish before it appears, so there's no flash. */
+  animation: loader-in 0.3s ease-out 0.15s both;
+}
+.loader p { margin: 0; font-size: 15px; letter-spacing: 0.01em; }
+.loader-hanger { width: 96px; height: auto; overflow: visible; }
+.loader-hanger g {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 20;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform-box: fill-box;
+  transform-origin: 50% 0; /* the top of the hook */
+  animation: hanger-swing 1.6s ease-in-out infinite alternate;
+}
+@keyframes hanger-swing {
+  from { transform: rotate(-14deg); }
+  to { transform: rotate(14deg); }
+}
+@keyframes loader-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loader-hanger g { animation: none; }
+}
