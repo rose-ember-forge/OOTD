@@ -67,6 +67,18 @@ export function createSupabaseStore(url, anonKey) {
       if (error) throw error;
     },
 
+    // Password sign-in needs no email, so it doesn't count against Supabase's email limit.
+    async signInWithPassword(email, password) {
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+    },
+
+    // Sets (or changes) the password of the signed-in account.
+    async setPassword(password) {
+      const { error } = await sb.auth.updateUser({ password });
+      if (error) throw error;
+    },
+
     async signOut() {
       await sb.auth.signOut();
       // Don't leave her photos cached on a device she has signed out of.

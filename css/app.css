@@ -127,7 +127,7 @@ code { font-size: 0.9em; }
 .filter-row::-webkit-scrollbar { display: none; }
 .filter-tools { display: flex; align-items: center; gap: 16px; font-size: 15px; }
 .count { margin-left: auto; font-size: 14px; }
-input[type="search"], input[type="text"], input[type="email"], textarea {
+input[type="search"], input[type="text"], input[type="email"], input[type="password"], textarea {
   width: 100%;
   font: inherit;
   font-size: 16px; /* 16px stops iOS zooming on focus */
@@ -389,3 +389,6 @@ legend { font-weight: 600; margin-bottom: 8px; padding: 0; }
 @media (prefers-reduced-motion: reduce) {
   .loader-hanger g { animation: none; }
 }
+
+.signin .link { justify-self: center; }
+.email-signin input[hidden] { display: none; }

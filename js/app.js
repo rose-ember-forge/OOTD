@@ -97,28 +97,45 @@ function renderSignIn() {
   app.innerHTML = `
     <div class="signin">
       <h1 class="brand">Wardrobe</h1>
-      <p class="muted">Sign in once on each device to see the same wardrobe on your iPhone and Mac.
-        We'll email you a link; open it on the device you want to sign in on.</p>
-      <form id="email-form" class="email-signin">
+      <p class="muted">Sign in once on each device to see the same wardrobe on your iPhone and Mac.</p>
+      <form id="signin-form" class="email-signin">
         <input type="email" name="email" required placeholder="you@example.com" autocomplete="email">
-        <button class="btn btn-primary">Email me a sign-in link</button>
+        <input type="password" name="password" placeholder="Password" autocomplete="current-password" hidden>
+        <button class="btn btn-primary" id="signin-go">Email me a sign-in link</button>
       </form>
+      <button type="button" class="link" id="signin-mode">Use a password instead</button>
       <p class="muted small" id="sent" hidden></p>
     </div>`;
-  const form = app.querySelector('#email-form');
+  const form = app.querySelector('#signin-form');
+  const go = app.querySelector('#signin-go');
+  const modeButton = app.querySelector('#signin-mode');
+  let usePassword = false;
+  modeButton.onclick = () => {
+    usePassword = !usePassword;
+    form.password.hidden = !usePassword;
+    form.password.required = usePassword;
+    go.textContent = usePassword ? 'Sign in' : 'Email me a sign-in link';
+    modeButton.textContent = usePassword ? 'Email me a link instead' : 'Use a password instead';
+    if (usePassword) form.password.focus();
+  };
   form.onsubmit = async (e) => {
     e.preventDefault();
-    const button = form.querySelector('button');
-    button.disabled = true;
+    const email = form.email.value.trim();
+    go.disabled = true;
     try {
-      await store.signInWithEmail(form.email.value.trim());
-      const sent = app.querySelector('#sent');
-      sent.textContent = `Link sent to ${form.email.value.trim()}. Check your inbox (and spam folder).`;
-      sent.hidden = false;
+      if (usePassword) {
+        // Success fires the auth change listener, which shows the wardrobe.
+        await store.signInWithPassword(email, form.password.value);
+      } else {
+        await store.signInWithEmail(email);
+        const sent = app.querySelector('#sent');
+        sent.textContent = `Link sent to ${email}. Check your inbox (and spam folder).`;
+        sent.hidden = false;
+      }
     } catch (err) {
       toast(err.message, true);
     } finally {
-      button.disabled = false;
+      go.disabled = false;
     }
   };
 }
@@ -164,7 +181,7 @@ async function renderGrid() {
         <a class="btn btn-primary" href="#/add">+ Add</a>
       </div>
     </header>
-    ${store.mode === 'demo' ? `<p class="banner">Demo mode: items are saved in this browser only. Add Supabase settings in <code>js/config.js</code> to sync.</p>` : ''}
+    ${store.mode === 'demo' ? `<p class="banner">Demo mode: test items saved in this browser only, separate from the real wardrobe.</p>` : ''}
     <a class="banner banner-link" id="import-pill" href="#/import" hidden></a>
     ${toTag ? `<a class="banner banner-link" href="#/review"><span><strong>${toTag}</strong> photo${toTag === 1 ? '' : 's'} to tag</span><span>Start ›</span></a>` : ''}
     <section class="filters" id="filters"></section>
@@ -173,8 +190,10 @@ async function renderGrid() {
     <footer class="footer muted">
       <span>${esc(store.userLabel())}</span>
       ${items.length ? `<button type="button" class="link" id="backup">Download backup</button>` : ''}
+      ${store.mode === 'cloud' ? `<button type="button" class="link" id="set-password">Set password</button>` : ''}
       ${store.mode === 'cloud' ? `<button type="button" class="link" id="signout">Sign out</button>` : ''}
     </footer>`;
+  app.querySelector('#set-password')?.addEventListener('click', openPasswordSheet);
   selection.on = false;
   selection.ids.clear();
   app.querySelector('#backup')?.addEventListener('click', downloadBackup);
@@ -458,6 +477,43 @@ function openBatchSheet() {
     if (button?.dataset.act === 'apply') applyChanges(button);
   };
   paint();
+}
+
+// ---------- password ----------
+
+// Lets her (or you) sign in with a password next time instead of an emailed link.
+function openPasswordSheet() {
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet-backdrop';
+  sheet.innerHTML = `
+    <form class="sheet" role="dialog" aria-label="Set password">
+      <div class="sheet-head">
+        <strong>Set a password</strong>
+        <button type="button" class="btn btn-ghost" data-act="close">Close</button>
+      </div>
+      <p class="muted small">Then you can sign in with ${esc(store.userLabel())} and this password, without waiting for an email.</p>
+      <input type="password" name="password" minlength="8" required placeholder="New password (at least 8 characters)" autocomplete="new-password">
+      <div class="editor-actions"><button class="btn btn-primary">Save password</button></div>
+    </form>`;
+  document.body.append(sheet);
+  const form = sheet.querySelector('form');
+  form.password.focus();
+  sheet.onclick = (e) => {
+    if (e.target === sheet || e.target.closest('[data-act=close]')) sheet.remove();
+  };
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const button = form.querySelector('.btn-primary');
+    button.disabled = true;
+    try {
+      await store.setPassword(form.password.value);
+      toast('Password saved');
+      sheet.remove();
+    } catch (err) {
+      toast(err.message, true);
+      button.disabled = false;
+    }
+  };
 }
 
 // ---------- backup ----------
@@ -962,7 +1018,10 @@ async function renderImport() {
 // ---------- boot ----------
 
 async function boot() {
-  if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+  // Adding ?demo to the address runs on test data in this browser, with no sign-in;
+  // handy while working on the app itself.
+  const demo = new URLSearchParams(location.search).has('demo');
+  if (SUPABASE_URL && SUPABASE_ANON_KEY && !demo) {
     const { createSupabaseStore } = await import('./store-supabase.js');
     store = createSupabaseStore(SUPABASE_URL, SUPABASE_ANON_KEY);
   } else {

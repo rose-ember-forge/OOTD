@@ -18,16 +18,22 @@ sw.js, manifest.webmanifest    install-to-home-screen + offline app shell
 supabase/migrations/           database table, security rules, photo bucket
 ```
 
-## Try it locally (demo mode)
-
-With `js/config.js` left empty the app runs without any backend; items are stored in that browser only
-and there is no sign-in.
+## Run it locally
 
 ```
 python -m http.server 8080
 ```
 
-Open http://localhost:8080.
+Open http://localhost:8080 to use the real wardrobe (sign in with your password; see below), or
+http://localhost:8080/?demo for test data kept in that browser only, with no sign-in. Demo mode is
+also what you get when `js/config.js` is empty.
+
+## Signing in
+
+The sign-in screen sends an email link, or (under *Use a password instead*) takes a password. Set
+a password once while signed in, with **Set password** at the bottom of the wardrobe; after that,
+signing in on any device or on localhost needs no email. Supabase's built-in email only sends a
+few messages an hour, so the password route is the one to use while developing.
 
 ## Set up the cloud backend (Supabase)
 
