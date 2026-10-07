@@ -1,7 +1,7 @@
 // Keeps the app shell available offline, and keeps photos on the device once seen.
 // Item data always comes from the network.
 // Bump VERSION when shipping changes so phones pick up the new files.
-const VERSION = 'v9';
+const VERSION = 'v10';
 const PHOTO_CACHE = 'photos';
 const SHELL = [
   './',
@@ -13,6 +13,8 @@ const SHELL = [
   './js/image.js',
   './js/color.js',
   './js/importer.js',
+  './js/outfit.js',
+  './js/demo-data.js',
   './js/store-supabase.js',
   './js/store-local.js',
   './manifest.webmanifest',

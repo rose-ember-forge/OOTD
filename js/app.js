@@ -6,6 +6,7 @@ import {
 } from './taxonomy.js';
 import { processPhoto, warmUpBackgroundRemoval } from './image.js';
 import { importState, startImport, stopImport, onImportProgress } from './importer.js';
+import { SLOTS, seasonForDate, suggestOutfit, swapPiece } from './outfit.js';
 
 const app = document.getElementById('app');
 
@@ -80,6 +81,7 @@ async function route() {
     if (store.mode === 'cloud' && !(await store.init())) return renderSignIn();
     if (hash === '#/add') return renderEditor(null);
     if (hash === '#/import') return renderImport();
+    if (hash === '#/outfit') return renderOutfit();
     if (hash === '#/review') return startReview();
     const m = hash.match(/^#\/(item|review)\/(.+)$/);
     if (m) return renderEditor(decodeURIComponent(m[2]), { review: m[1] === 'review' });
@@ -181,8 +183,9 @@ async function renderGrid() {
         <a class="btn btn-primary" href="#/add">+ Add</a>
       </div>
     </header>
-    ${store.mode === 'demo' ? `<p class="banner">Demo mode: test items saved in this browser only, separate from the real wardrobe.</p>` : ''}
+    ${store.mode === 'demo' ? `<p class="banner">Demo mode: sample items saved in this browser only, separate from the real wardrobe.</p>` : ''}
     <a class="banner banner-link" id="import-pill" href="#/import" hidden></a>
+    ${items.some((i) => i.type) ? `<a class="outfit-link" href="#/outfit"><span><strong>Today's outfit</strong><br><span class="muted">A suggestion for ${esc(capitalize(seasonForDate()))}, from your wardrobe</span></span><span class="outfit-link-go">See it ›</span></a>` : ''}
     ${toTag ? `<a class="banner banner-link" href="#/review"><span><strong>${toTag}</strong> photo${toTag === 1 ? '' : 's'} to tag</span><span>Start ›</span></a>` : ''}
     <section class="filters" id="filters"></section>
     <main class="grid" id="grid"></main>
@@ -190,10 +193,20 @@ async function renderGrid() {
     <footer class="footer muted">
       <span>${esc(store.userLabel())}</span>
       ${items.length ? `<button type="button" class="link" id="backup">Download backup</button>` : ''}
+      ${store.mode === 'demo' ? `<button type="button" class="link" id="reset-samples">Reset sample items</button>` : ''}
       ${store.mode === 'cloud' ? `<button type="button" class="link" id="set-password">Set password</button>` : ''}
       ${store.mode === 'cloud' ? `<button type="button" class="link" id="signout">Sign out</button>` : ''}
     </footer>`;
   app.querySelector('#set-password')?.addEventListener('click', openPasswordSheet);
+  app.querySelector('#reset-samples')?.addEventListener('click', async () => {
+    if (!confirm('Replace everything in demo mode with the sample items?')) return;
+    app.innerHTML = loader('Setting up sample items…');
+    await store.deleteItems((await store.listItems()).map((i) => i.id));
+    const { addSampleItems } = await import('./demo-data.js');
+    await addSampleItems(store);
+    items = null;
+    renderGrid();
+  });
   selection.on = false;
   selection.ids.clear();
   app.querySelector('#backup')?.addEventListener('click', downloadBackup);
@@ -918,6 +931,144 @@ async function renderEditor(id, { review = false } = {}) {
   paintChips();
 }
 
+// ---------- outfit of the day ----------
+
+// Remembered per browser so the screen opens on her usual choices.
+const prefs = {
+  get(key) {
+    try {
+      return localStorage.getItem(`ootd-${key}`);
+    } catch {
+      return null;
+    }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(`ootd-${key}`, value);
+    } catch {
+      /* private mode etc.: fine, just not remembered */
+    }
+  },
+};
+
+const todayKey = () => new Date().toISOString().slice(0, 10);
+
+function defaultOccasion() {
+  const saved = prefs.get('outfit-occasion');
+  if (saved && allOccasions().includes(saved)) return saved;
+  const weekday = ![0, 6].includes(new Date().getDay());
+  const usesWork = items.some((i) => (i.occasions ?? []).includes('work'));
+  return weekday && usesWork ? 'work' : 'casual';
+}
+
+async function renderOutfit() {
+  app.innerHTML = loader('Picking an outfit…');
+  await loadItems();
+  // The season she picked today, else the one the calendar says.
+  const savedSeason = prefs.get('outfit-season')?.split('|');
+  let season = savedSeason?.[0] === todayKey() ? savedSeason[1] : seasonForDate();
+  let occasion = defaultOccasion();
+  let shuffles = 0;
+  let swaps = 0;
+  let result;
+
+  const seed = () => `${todayKey()}|${season}|${occasion}|${shuffles}`;
+  const suggest = () => (result = suggestOutfit(items, { season, occasion, seed: seed() }));
+
+  app.innerHTML = `
+    <header class="topbar">
+      <a class="btn btn-ghost" href="#/">‹ Back</a>
+      <h1 class="title">Today's outfit</h1>
+      <span class="spacer"></span>
+    </header>
+    <div class="outfit-page">
+      <section class="outfit-controls" id="controls"></section>
+      <section class="outfit-board" id="board"></section>
+      <p class="muted small center" id="outfit-note"></p>
+      <div class="editor-actions sticky">
+        <button type="button" class="btn btn-primary" id="shuffle">Shuffle</button>
+      </div>
+    </div>`;
+
+  function paintControls() {
+    app.querySelector('#controls').innerHTML = `
+      <div class="filter-row" aria-label="Season">
+        ${SEASONS.filter((x) => x.key !== ALL_YEAR).map((x) => chip('season', x.key, x.label, season === x.key)).join('')}
+      </div>
+      <div class="filter-row" aria-label="Occasion">
+        ${allOccasions().map((o) => chip('occasion', o, capitalize(o), occasion === o)).join('')}
+      </div>`;
+  }
+
+  function pieceLabel(i) {
+    return capitalize(i.subtype || [i.sleeve, i.length, typeLabel(i.type)].filter(Boolean).join(' · '));
+  }
+
+  function paintBoard() {
+    const { outfit, missing } = result;
+    const filled = SLOTS.filter((x) => outfit[x.key]);
+    const board = app.querySelector('#board');
+    board.innerHTML = filled.length
+      ? filled
+          .map(({ key, label }) => {
+            const i = outfit[key];
+            return `
+            <figure class="piece piece-${key}">
+              <a class="piece-img" href="#/item/${encodeURIComponent(i.id)}" aria-label="Open ${esc(pieceLabel(i))}">
+                ${i.thumbUrl ? `<img src="${esc(i.thumbUrl)}" alt="" crossorigin="anonymous">` : ''}
+              </a>
+              <figcaption>
+                <span><span class="muted">${label}</span><br>${esc(pieceLabel(i))}</span>
+                <button type="button" class="link" data-swap="${key}">Swap</button>
+              </figcaption>
+            </figure>`;
+          })
+          .join('')
+      : `<div class="empty"><p>No pieces fit ${esc(capitalize(season))} · ${esc(capitalize(occasion))} yet.</p></div>`;
+
+    const names = { top: 'a top', bottom: 'a bottom', shoes: 'shoes' };
+    const note = missing.length
+      ? `To complete outfits for this season and occasion, tag ${missing.map((m) => names[m]).join(' and ')} for it.`
+      : 'Tap a piece to open it, or Swap to try another.';
+    app.querySelector('#outfit-note').textContent = note;
+  }
+
+  app.querySelector('#controls').onclick = (e) => {
+    const c = e.target.closest('.chip');
+    if (!c) return;
+    if (c.dataset.group === 'season') {
+      season = c.dataset.value;
+      prefs.set('outfit-season', `${todayKey()}|${season}`);
+    } else {
+      occasion = c.dataset.value;
+      prefs.set('outfit-occasion', occasion);
+    }
+    shuffles = 0;
+    paintControls();
+    suggest();
+    paintBoard();
+  };
+
+  app.querySelector('#board').onclick = (e) => {
+    const slot = e.target.closest('[data-swap]')?.dataset.swap;
+    if (!slot) return;
+    const next = swapPiece(items, result.outfit, slot, { season, occasion, seed: `${seed()}|${slot}|${++swaps}` });
+    if (!next) return toast(`No other ${slot === 'shoes' ? 'shoes' : SLOTS.find((x) => x.key === slot).label.toLowerCase()} fit this season and occasion.`);
+    result.outfit[slot] = next;
+    paintBoard();
+  };
+
+  app.querySelector('#shuffle').onclick = () => {
+    shuffles++;
+    suggest();
+    paintBoard();
+  };
+
+  paintControls();
+  suggest();
+  paintBoard();
+}
+
 // ---------- bulk import ----------
 
 const importDefaults = { seasons: [], occasions: [], removeBackground: true };
@@ -1029,6 +1180,12 @@ async function boot() {
     store = createLocalStore();
   }
   let signedIn = !!(await store.init());
+  // A fresh demo starts with a sample wardrobe, so every screen has something to show.
+  if (store.mode === 'demo' && !(await store.listItems()).length) {
+    app.innerHTML = loader('Setting up sample items…');
+    const { addSampleItems } = await import('./demo-data.js');
+    await addSampleItems(store);
+  }
   // Re-render only when sign-in state actually flips (not on token refreshes).
   store.onAuthChange((session) => {
     if (!!session === signedIn) return;

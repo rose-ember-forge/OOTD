@@ -14,6 +14,8 @@ index.html, css/, js/          the app
   js/image.js                  resize, background removal, thumbnails
   js/color.js                  guesses the main color from a photo (on the device)
   js/importer.js               bulk import runner
+  js/outfit.js                 outfit-of-the-day rules
+  js/demo-data.js              sample wardrobe for demo mode (drawn garment pictures)
 sw.js, manifest.webmanifest    install-to-home-screen + offline app shell
 supabase/migrations/           database table, security rules, photo bucket
 ```
@@ -26,7 +28,9 @@ python -m http.server 8080
 
 Open http://localhost:8080 to use the real wardrobe (sign in with your password; see below), or
 http://localhost:8080/?demo for test data kept in that browser only, with no sign-in. Demo mode is
-also what you get when `js/config.js` is empty.
+also what you get when `js/config.js` is empty. It starts with a sample wardrobe of 42 drawn items
+covering every type, sleeve and length, spread so every season and occasion has a full outfit;
+**Reset sample items** at the bottom puts it back.
 
 ## Signing in
 
@@ -126,7 +130,19 @@ on the device keyed by its storage path instead, so the wardrobe opens from the 
 first view and uses less of Supabase's free data allowance. Every upload gets a new file name, so a
 replaced photo never shows a stale copy. Signing out clears the cached photos.
 
+## Today's outfit
+
+The card at the top of the wardrobe opens an outfit suggestion for the day: a dress or a top and
+bottom, plus shoes, a layer when it's cold (always in winter, usually in autumn, sometimes in spring)
+and sometimes an accessory. Only pieces tagged for the chosen season (or all-year) and occasion
+are used; items with no occasion count for any. Combinations are scored so there's at most one
+patterned piece, a neutral base with one or two accent colors, no clashing accents, and no
+sleeveless or short pieces in the cold. The season defaults to the calendar's (northern hemisphere)
+and the occasion to *work* on weekdays (if anything is tagged work), else *casual*; both can be
+changed and are remembered. The suggestion stays the same for the day until **Shuffle**; **Swap**
+replaces one piece with another that goes with the rest. No AI service is involved.
+
 ## Not built yet
 
-AI tag suggestions were dropped to keep the app free to run; they could come back later. Outfit
-suggestions, an outfit builder, weather and sharing are deliberately left for later.
+AI tag suggestions were dropped to keep the app free to run; they could come back later. Saving
+outfits, an outfit builder, weather and sharing are left for later.

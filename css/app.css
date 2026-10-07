@@ -61,6 +61,10 @@ code { font-size: 0.9em; }
   top: 0;
   background: var(--bg);
   z-index: 5;
+  /* Reach the screen edges, so scrolled-under filter rows (which do too) don't peek out. */
+  margin: 0 -16px;
+  padding-left: 16px;
+  padding-right: 16px;
 }
 .brand { font: 600 26px/1.1 ui-serif, "New York", Georgia, serif; margin: 0; letter-spacing: -0.01em; }
 .title { font-size: 18px; margin: 0; flex: 1; text-align: center; }
@@ -392,3 +396,41 @@ legend { font-weight: 600; margin-bottom: 8px; padding: 0; }
 
 .signin .link { justify-self: center; }
 .email-signin input[hidden] { display: none; }
+
+/* ---------- outfit of the day ---------- */
+.outfit-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 8px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--accent-text);
+  text-decoration: none;
+}
+.outfit-link .muted { color: inherit; opacity: 0.8; font-size: 14px; }
+.outfit-link-go { font-weight: 600; white-space: nowrap; }
+.outfit-page { display: grid; gap: 14px; max-width: 720px; margin: 0 auto; }
+.outfit-controls { display: grid; gap: 8px; }
+.outfit-board {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+@media (min-width: 700px) { .outfit-board { grid-template-columns: repeat(3, 1fr); } }
+.piece { margin: 0; display: grid; gap: 6px; }
+.piece-img {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 3 / 4;
+  background: var(--card);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.piece-img img { width: 88%; height: 88%; object-fit: contain; }
+.piece figcaption { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; font-size: 14px; }
+.piece figcaption .muted { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.center { text-align: center; }
