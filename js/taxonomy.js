@@ -1,9 +1,27 @@
 // Fixed vocabularies from the spec. Stored values are the keys; labels are for display.
 
+// An item can have any number of seasons; "all year" means all four.
 export const SEASONS = [
-  { key: 'spring_summer', label: 'Spring–summer' },
-  { key: 'autumn_winter', label: 'Autumn–winter' },
-  { key: 'all_year', label: 'All year' },
+  { key: 'spring', label: 'Spring' },
+  { key: 'summer', label: 'Summer' },
+  { key: 'autumn', label: 'Autumn' },
+  { key: 'winter', label: 'Winter' },
+];
+export const ALL_SEASONS = SEASONS.map((s) => s.key);
+
+// Older items used three season groups; read them as the seasons they cover.
+const LEGACY_SEASONS = {
+  spring_summer: ['spring', 'summer'],
+  autumn_winter: ['autumn', 'winter'],
+  all_year: ALL_SEASONS,
+};
+export const normalizeSeasons = (list) =>
+  ALL_SEASONS.filter((k) => (list ?? []).some((v) => v === k || LEGACY_SEASONS[v]?.includes(k)));
+
+// She can add her own materials too; these are the starting set.
+export const DEFAULT_MATERIALS = [
+  'cotton', 'linen', 'wool', 'cashmere', 'silk', 'denim',
+  'leather', 'suede', 'polyester', 'viscose', 'nylon', 'acrylic',
 ];
 
 // She can add her own occasions; these are the starting set.

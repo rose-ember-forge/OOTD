@@ -1,7 +1,7 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 import {
-  SEASONS, DEFAULT_OCCASIONS, TYPES, COLORS, PATTERNS, COLOR_SWATCH,
-  seasonLabel, typeLabel, capitalize,
+  SEASONS, ALL_SEASONS, normalizeSeasons, DEFAULT_OCCASIONS, DEFAULT_MATERIALS,
+  TYPES, COLORS, PATTERNS, COLOR_SWATCH, typeLabel, capitalize,
 } from './taxonomy.js';
 import { processPhoto, warmUpBackgroundRemoval } from './image.js';
 import { importState, startImport, stopImport, onImportProgress } from './importer.js';
@@ -12,7 +12,11 @@ let store;
 let items = null; // cached list; null means "needs loading"
 let itemsLoadedAt = 0;
 const ITEMS_MAX_AGE = 45 * 60 * 1000; // photo links from the cloud expire after an hour
-const filters = { seasons: new Set(), occasions: new Set(), types: new Set(), colors: new Set(), q: '', more: false };
+const filters = {
+  seasons: new Set(), occasions: new Set(), types: new Set(), colors: new Set(), materials: new Set(),
+  q: '', more: false,
+};
+const SET_FILTERS = ['seasons', 'occasions', 'types', 'colors', 'materials'];
 const selection = { on: false, ids: new Set() }; // grid select mode, for editing many items at once
 const UNTAGGED = '__none'; // type filter value for items without a type
 
@@ -39,9 +43,23 @@ function allOccasions() {
   return [...new Set([...DEFAULT_OCCASIONS, ...used])];
 }
 
+function allMaterials() {
+  const used = (items ?? []).flatMap((i) => i.materials ?? []);
+  return [...new Set([...DEFAULT_MATERIALS, ...used])];
+}
+
+// The four season chips plus an "All year" shortcut that picks (or clears) all four.
+const seasonChips = (selected) =>
+  SEASONS.map((x) => chip('seasons', x.key, x.label, selected.includes(x.key))).join('') +
+  `<button type="button" class="chip shortcut${ALL_SEASONS.every((k) => selected.includes(k)) ? ' on' : ''}" data-group="all-seasons" data-value="all">All year</button>`;
+const toggleAllSeasons = (selected) => (ALL_SEASONS.every((k) => selected.includes(k)) ? [] : [...ALL_SEASONS]);
+
+// Same shape whatever the data's age: four-season keys, and a materials list.
+const normalizeItem = (i) => ({ ...i, seasons: normalizeSeasons(i.seasons), materials: i.materials ?? [] });
+
 async function loadItems(force = false) {
   if (items && !force && Date.now() - itemsLoadedAt < ITEMS_MAX_AGE) return items;
-  items = await store.listItems();
+  items = (await store.listItems()).map(normalizeItem);
   itemsLoadedAt = Date.now();
   return items;
 }
@@ -106,16 +124,14 @@ function renderSignIn() {
 
 function matches(item) {
   const f = filters;
-  if (f.seasons.size) {
-    const s = item.seasons ?? [];
-    // All-year pieces belong in every season.
-    if (!s.includes('all_year') && !s.some((x) => f.seasons.has(x))) return false;
-  }
+  // An item matches a season (or material) filter if it has any of the picked ones.
+  if (f.seasons.size && !item.seasons.some((x) => f.seasons.has(x))) return false;
+  if (f.materials.size && !item.materials.some((m) => f.materials.has(m))) return false;
   if (f.occasions.size && !(item.occasions ?? []).some((o) => f.occasions.has(o))) return false;
   if (f.types.size && !f.types.has(item.type || UNTAGGED)) return false;
   if (f.colors.size && !f.colors.has(item.color)) return false;
   if (f.q) {
-    const hay = [item.type, item.subtype, item.color, item.pattern, item.fabric, item.fit, item.brand, item.notes, ...(item.tags ?? [])]
+    const hay = [item.type, item.subtype, item.color, item.pattern, item.fabric, item.fit, item.brand, item.notes, ...item.materials, ...(item.tags ?? [])]
       .join(' ')
       .toLowerCase();
     if (!f.q.toLowerCase().split(/\s+/).every((w) => hay.includes(w))) return false;
@@ -124,7 +140,7 @@ function matches(item) {
 }
 
 const activeFilterCount = () =>
-  filters.seasons.size + filters.occasions.size + filters.types.size + filters.colors.size + (filters.q ? 1 : 0);
+  SET_FILTERS.reduce((n, k) => n + filters[k].size, 0) + (filters.q ? 1 : 0);
 
 async function renderGrid() {
   app.innerHTML = `<div class="page"><p class="muted">Loading…</p></div>`;
@@ -198,7 +214,10 @@ function renderFilters() {
       <div class="filter-row" aria-label="Color">
         ${COLORS.map((c) => chip('colors', c, colorDot(c) + capitalize(c), f.colors.has(c))).join('')}
       </div>
-      <input type="search" id="search" placeholder="Search brand, fabric, notes…" value="${esc(f.q)}">` : ''}`;
+      <div class="filter-row" aria-label="Material">
+        ${allMaterials().map((m) => chip('materials', m, capitalize(m), f.materials.has(m))).join('')}
+      </div>
+      <input type="search" id="search" placeholder="Search brand, notes, tags…" value="${esc(f.q)}">` : ''}`;
 
   el.onclick = (e) => {
     const c = e.target.closest('.chip');
@@ -210,7 +229,7 @@ function renderFilters() {
     if (e.target.id === 'more') return (filters.more = !filters.more), renderFilters();
     if (e.target.id === 'select') return setSelecting(!selection.on);
     if (e.target.id === 'clear') {
-      ['seasons', 'occasions', 'types', 'colors'].forEach((k) => filters[k].clear());
+      SET_FILTERS.forEach((k) => filters[k].clear());
       filters.q = '';
       return renderFilters(), renderCards();
     }
@@ -297,7 +316,7 @@ function paintSelectBar() {
 function openBatchSheet() {
   const ids = [...selection.ids];
   if (!ids.length) return;
-  const pick = { type: '', color: '', pattern: '', seasons: [], occasions: [], photo: '' };
+  const pick = { type: '', color: '', pattern: '', seasons: [], occasions: [], materials: [], photo: '' };
   const withOriginal = ids.filter((id) => items.find((i) => i.id === id)?.original_photo_path).length;
   const sheet = document.createElement('div');
   sheet.className = 'sheet-backdrop';
@@ -320,9 +339,11 @@ function openBatchSheet() {
         <fieldset><legend>Pattern</legend>
           <div class="chips">${PATTERNS.map((x) => chip('pattern', x, capitalize(x), pick.pattern === x)).join('')}</div></fieldset>
         <fieldset><legend>Season <span class="muted">(replaces their seasons)</span></legend>
-          <div class="chips">${SEASONS.map((x) => chip('seasons', x.key, x.label, pick.seasons.includes(x.key))).join('')}</div></fieldset>
+          <div class="chips">${seasonChips(pick.seasons)}</div></fieldset>
         <fieldset><legend>Add occasion</legend>
           <div class="chips">${allOccasions().map((o) => chip('occasions', o, capitalize(o), pick.occasions.includes(o))).join('')}</div></fieldset>
+        <fieldset><legend>Add material</legend>
+          <div class="chips">${allMaterials().map((m) => chip('materials', m, capitalize(m), pick.materials.includes(m))).join('')}</div></fieldset>
         ${withOriginal ? `
         <fieldset><legend>Photo <span class="muted">(${withOriginal} of these ${withOriginal === 1 ? 'has' : 'have'} an original)</span></legend>
           <div class="chips">${chip('photo', 'cutout', 'Cut-out', pick.photo === 'cutout')}${chip('photo', 'original', 'Original (undo background removal)', pick.photo === 'original')}</div></fieldset>` : ''}
@@ -342,6 +363,7 @@ function openBatchSheet() {
       if (pick.pattern) fields.pattern = pick.pattern;
       if (pick.seasons.length) fields.seasons = pick.seasons;
       if (pick.occasions.length) fields.occasions = [...new Set([...(item.occasions ?? []), ...pick.occasions])];
+      if (pick.materials.length) fields.materials = [...new Set([...item.materials, ...pick.materials])];
       // Only items that kept an original can switch photos.
       if (pick.photo && item.original_photo_path) fields.use_original = pick.photo === 'original';
       return { id, fields };
@@ -384,7 +406,9 @@ function openBatchSheet() {
     const c = e.target.closest('.chip');
     if (c) {
       const { group, value } = c.dataset;
-      if (Array.isArray(pick[group])) {
+      if (group === 'all-seasons') {
+        pick.seasons = toggleAllSeasons(pick.seasons);
+      } else if (Array.isArray(pick[group])) {
         pick[group] = pick[group].includes(value) ? pick[group].filter((x) => x !== value) : [...pick[group], value];
       } else {
         pick[group] = pick[group] === value ? '' : value;
@@ -403,7 +427,7 @@ function openBatchSheet() {
 
 const BACKUP_FIELDS = [
   'id', 'created_at', 'updated_at', 'seasons', 'occasions', 'type', 'subtype',
-  'color', 'pattern', 'fabric', 'fit', 'brand', 'notes', 'tags',
+  'color', 'pattern', 'materials', 'fabric', 'fit', 'brand', 'notes', 'tags',
 ];
 
 // Everything she has entered plus each full-size photo, as one zip file.
@@ -470,8 +494,8 @@ async function downloadBackup(e) {
 // ---------- add / edit ----------
 
 const EMPTY = {
-  seasons: [], occasions: [], type: '', subtype: '', color: '', pattern: '',
-  fabric: '', fit: '', brand: '', notes: '', tags: [],
+  seasons: [], occasions: [], type: '', subtype: '', color: '', pattern: '', materials: [],
+  fit: '', brand: '', notes: '', tags: [],
 };
 
 // Next untagged item after `id` in the queue, wrapping around; null when none are left.
@@ -509,7 +533,7 @@ async function renderEditor(id, { review = false } = {}) {
   await loadItems();
   const existing = id ? await store.getItem(id) : null;
   const left = review ? tagQueue().length : 0;
-  const draft = { ...EMPTY, ...(existing ?? {}) };
+  const draft = { ...EMPTY, ...(existing ? normalizeItem(existing) : {}) };
   let images = null; // set when a new photo was processed
   // The two versions of the photo: the cut-out (or only photo) and, when the background was
   // removed, the untouched original. `useOriginal` is which one the item shows.
@@ -518,6 +542,7 @@ async function renderEditor(id, { review = false } = {}) {
   // Imported items only have a color if it was guessed from the photo.
   let colorGuessed = review && !!draft.color;
   const occasionChoices = allOccasions();
+  const materialChoices = allMaterials();
 
   if (!review) warmUpBackgroundRemoval();
 
@@ -544,7 +569,7 @@ async function renderEditor(id, { review = false } = {}) {
       </section>
 
       <fieldset>
-        <legend>Season <span class="muted">(pick one or more)</span></legend>
+        <legend>Season <span class="muted">(pick any)</span></legend>
         <div class="chips" id="f-seasons"></div>
       </fieldset>
 
@@ -576,9 +601,17 @@ async function renderEditor(id, { review = false } = {}) {
         <div class="chips" id="f-pattern"></div>
       </fieldset>
 
+      <fieldset>
+        <legend>Material <span class="muted">(optional)</span></legend>
+        <div class="chips" id="f-materials"></div>
+        <div class="inline-add">
+          <input type="text" id="new-material" placeholder="Add another material">
+          <button type="button" class="btn" id="add-material">Add</button>
+        </div>
+      </fieldset>
+
       <details class="details" ${review ? '' : 'open'}>
         <summary>Details <span class="muted">(optional)</span></summary>
-        <label class="field">Fabric <input type="text" name="fabric"></label>
         <label class="field">Fit <input type="text" name="fit"></label>
         <label class="field">Brand <input type="text" name="brand"></label>
         <label class="field">Tags <input type="text" name="tags" placeholder="comma separated"></label>
@@ -597,7 +630,7 @@ async function renderEditor(id, { review = false } = {}) {
   const setStatus = (t) => ($('#status').textContent = t);
 
   // Text inputs ↔ draft
-  for (const name of ['subtype', 'fabric', 'fit', 'brand', 'notes']) form.elements[name].value = draft[name] ?? '';
+  for (const name of ['subtype', 'fit', 'brand', 'notes']) form.elements[name].value = draft[name] ?? '';
   form.elements.tags.value = (draft.tags ?? []).join(', ');
 
   function paintPreview() {
@@ -618,7 +651,9 @@ async function renderEditor(id, { review = false } = {}) {
   };
 
   function paintChips() {
-    $('#f-seasons').innerHTML = SEASONS.map((s) => chip('seasons', s.key, s.label, draft.seasons.includes(s.key))).join('');
+    $('#f-seasons').innerHTML = seasonChips(draft.seasons);
+    const mats = [...new Set([...materialChoices, ...draft.materials])];
+    $('#f-materials').innerHTML = mats.map((m) => chip('materials', m, capitalize(m), draft.materials.includes(m))).join('');
     const occ = [...new Set([...occasionChoices, ...draft.occasions])];
     $('#f-occasions').innerHTML = occ.map((o) => chip('occasions', o, capitalize(o), draft.occasions.includes(o))).join('');
     $('#f-type').innerHTML = TYPES.map((t) => chip('type', t.key, t.label, draft.type === t.key)).join('');
@@ -633,7 +668,9 @@ async function renderEditor(id, { review = false } = {}) {
     const c = e.target.closest('.chip');
     if (!c) return;
     const { group, value } = c.dataset;
-    if (group === 'seasons' || group === 'occasions') {
+    if (group === 'all-seasons') {
+      draft.seasons = toggleAllSeasons(draft.seasons);
+    } else if (group === 'seasons' || group === 'occasions' || group === 'materials') {
       const list = draft[group];
       draft[group] = list.includes(value) ? list.filter((x) => x !== value) : [...list, value];
     } else {
@@ -643,19 +680,24 @@ async function renderEditor(id, { review = false } = {}) {
     paintChips();
   });
 
-  $('#add-occasion').onclick = () => {
-    const v = $('#new-occasion').value.trim().toLowerCase();
-    if (!v) return;
-    if (!draft.occasions.includes(v)) draft.occasions.push(v);
-    $('#new-occasion').value = '';
-    paintChips();
-  };
-  $('#new-occasion').onkeydown = (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      $('#add-occasion').click();
-    }
-  };
+  // Typing your own occasion or material adds and selects it.
+  for (const list of ['occasions', 'materials']) {
+    const one = list === 'occasions' ? 'occasion' : 'material';
+    const input = $(`#new-${one}`);
+    $(`#add-${one}`).onclick = () => {
+      const v = input.value.trim().toLowerCase();
+      if (!v) return;
+      if (!draft[list].includes(v)) draft[list].push(v);
+      input.value = '';
+      paintChips();
+    };
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        $(`#add-${one}`).click();
+      }
+    };
+  }
 
   async function onPhoto(e) {
     const file = e.target.files?.[0];
@@ -716,7 +758,7 @@ async function renderEditor(id, { review = false } = {}) {
       subtype: form.elements.subtype.value.trim() || null,
       color: draft.color || null,
       pattern: draft.pattern || null,
-      fabric: form.elements.fabric.value.trim() || null,
+      materials: draft.materials,
       fit: form.elements.fit.value.trim() || null,
       brand: form.elements.brand.value.trim() || null,
       notes: form.elements.notes.value.trim() || null,
@@ -824,7 +866,7 @@ async function renderImport() {
         straight away; afterwards you tag them one by one.</p>
       <fieldset>
         <legend>Season for all of them <span class="muted">(optional)</span></legend>
-        <div class="chips">${SEASONS.map((s) => chip('seasons', s.key, s.label, d.seasons.includes(s.key))).join('')}</div>
+        <div class="chips">${seasonChips(d.seasons)}</div>
       </fieldset>
       <fieldset>
         <legend>Occasion for all of them <span class="muted">(optional)</span></legend>
@@ -838,9 +880,13 @@ async function renderImport() {
     root.onclick = (e) => {
       const c = e.target.closest('.chip');
       if (!c) return;
-      const list = d[c.dataset.group];
-      const v = c.dataset.value;
-      d[c.dataset.group] = list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
+      if (c.dataset.group === 'all-seasons') {
+        d.seasons = toggleAllSeasons(d.seasons);
+      } else {
+        const list = d[c.dataset.group];
+        const v = c.dataset.value;
+        d[c.dataset.group] = list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
+      }
       paint();
     };
     root.querySelector('#removeBg').onchange = (e) => (d.removeBackground = e.target.checked);

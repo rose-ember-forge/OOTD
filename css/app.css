@@ -350,3 +350,6 @@ legend { font-weight: 600; margin-bottom: 8px; padding: 0; }
   cursor: pointer;
 }
 .segmented button[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-text); }
+/* "All year" picks all four seasons; styled as a shortcut rather than a fifth value. */
+.chip.shortcut { border-style: dashed; color: var(--muted); }
+.chip.shortcut.on { background: var(--surface); border-color: var(--chip-on); color: var(--text); }

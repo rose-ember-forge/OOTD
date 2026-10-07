@@ -35,7 +35,8 @@ Open http://localhost:8080.
 2. **Database:** open SQL Editor and run each file in `supabase/migrations/` in name order
    (paste, Run). `20261003000000_init.sql` creates the `items` table, row-level security (each
    user only sees their own items) and a private `photos` storage bucket;
-   `20261004000000_original_photo.sql` adds the columns that keep original photos.
+   `20261004000000_original_photo.sql` adds the columns that keep original photos;
+   `20261007000000_four_seasons_materials.sql` switches to four seasons and adds materials.
 3. **App config:** Project Settings → API Keys. Copy the Project URL and the publishable key
    (`sb_publishable_…`, called the anon key in older projects) into `js/config.js`. That key is
    public by design. Never put the secret key (`sb_secret_…` / `service_role`) in the app.
@@ -62,7 +63,10 @@ When you ship changes, bump `VERSION` in `sw.js` so installed copies refresh.
   a model of a few tens of MB (cached afterwards); each photo takes a few seconds on a recent iPhone.
   If it fails, the original photo is kept. It can be turned off per photo. The library is
   AGPL-3.0 licensed, which is fine for personal use; check its terms before offering the app to others.
-- **Seasons:** an item can have several. Items marked *All year* show up under any season filter.
+- **Seasons:** spring, summer, autumn and winter; an item can have any number of them. *All year* is
+  a shortcut that picks all four. Filtering by a season shows every item that has it.
+- **Materials:** cotton, wool, linen and so on; an item can have several (a blend), and custom ones
+  typed into an item become filter chips. Filter by them under *More filters*.
 - **Occasions:** six defaults; custom ones typed into an item become filter chips automatically.
 
 ## Bulk import
@@ -80,7 +84,7 @@ photo for later.
 
 **Select** (next to the item count) turns on select mode: tap items, or **All** to take everything
 the filters currently show, then **Edit**. Only what you pick changes: type, color and pattern are
-replaced, seasons are replaced if you pick any, and occasions are added. The same sheet can delete the
+replaced, seasons are replaced if you pick any, and occasions and materials are added. The same sheet can delete the
 selection. Tip: *More filters → To tag* shows just the untagged photos.
 
 ## Undoing background removal
