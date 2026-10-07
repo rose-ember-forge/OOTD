@@ -1,22 +1,46 @@
 // Fixed vocabularies from the spec. Stored values are the keys; labels are for display.
 
-// An item can have any number of seasons; "all year" means all four.
+// An item is either all-year or has one or more of the four seasons; the two never mix.
+export const ALL_YEAR = 'all_year';
+export const FOUR_SEASONS = ['spring', 'summer', 'autumn', 'winter'];
 export const SEASONS = [
   { key: 'spring', label: 'Spring' },
   { key: 'summer', label: 'Summer' },
   { key: 'autumn', label: 'Autumn' },
   { key: 'winter', label: 'Winter' },
+  { key: ALL_YEAR, label: 'All year' },
 ];
-export const ALL_SEASONS = SEASONS.map((s) => s.key);
 
-// Older items used three season groups; read them as the seasons they cover.
-const LEGACY_SEASONS = {
-  spring_summer: ['spring', 'summer'],
-  autumn_winter: ['autumn', 'winter'],
-  all_year: ALL_SEASONS,
+// Older items used season groups; read them as the seasons they cover.
+const LEGACY_SEASONS = { spring_summer: ['spring', 'summer'], autumn_winter: ['autumn', 'winter'] };
+
+// Tidy any stored list: expand old groups, keep the four in order, and treat
+// "all year" (or all four picked) as just all-year.
+export function normalizeSeasons(list) {
+  const raw = (list ?? []).flatMap((v) => LEGACY_SEASONS[v] ?? [v]);
+  const four = FOUR_SEASONS.filter((k) => raw.includes(k));
+  return raw.includes(ALL_YEAR) || four.length === 4 ? [ALL_YEAR] : four;
+}
+
+// Tapping a season chip: "All year" replaces the seasons, a season replaces "All year".
+export function toggleSeason(list, key) {
+  if (key === ALL_YEAR) return list.includes(ALL_YEAR) ? [] : [ALL_YEAR];
+  const four = list.filter((k) => k !== ALL_YEAR);
+  return normalizeSeasons(four.includes(key) ? four.filter((k) => k !== key) : [...four, key]);
+}
+
+// Sub-classes. Which ones apply depends on the type.
+export const SLEEVES = ['sleeveless', 'half sleeve', 'three-quarter sleeve', 'full sleeve'];
+export const SLEEVE_TYPES = ['top', 'dress', 'outerwear'];
+export const LENGTHS_BY_TYPE = {
+  bottom: ['shorts', 'mini', 'knee-length', 'midi', 'cropped', 'ankle-length', 'full-length', 'maxi'],
+  dress: ['mini', 'knee-length', 'midi', 'maxi'],
+  outerwear: ['cropped', 'hip-length', 'thigh-length', 'knee-length', 'long'],
+  socks: ['no-show', 'ankle', 'crew', 'knee-high'],
 };
-export const normalizeSeasons = (list) =>
-  ALL_SEASONS.filter((k) => (list ?? []).some((v) => v === k || LEGACY_SEASONS[v]?.includes(k)));
+export const ALL_LENGTHS = [...new Set(Object.values(LENGTHS_BY_TYPE).flat())];
+export const sleevesFor = (type) => (SLEEVE_TYPES.includes(type) ? SLEEVES : []);
+export const lengthsFor = (type) => LENGTHS_BY_TYPE[type] ?? [];
 
 // She can add her own materials too; these are the starting set.
 export const DEFAULT_MATERIALS = [

@@ -1,7 +1,8 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 import {
-  SEASONS, ALL_SEASONS, normalizeSeasons, DEFAULT_OCCASIONS, DEFAULT_MATERIALS,
-  TYPES, COLORS, PATTERNS, COLOR_SWATCH, typeLabel, capitalize,
+  SEASONS, ALL_YEAR, normalizeSeasons, toggleSeason, DEFAULT_OCCASIONS, DEFAULT_MATERIALS,
+  TYPES, COLORS, PATTERNS, COLOR_SWATCH, SLEEVES, ALL_LENGTHS, sleevesFor, lengthsFor,
+  typeLabel, capitalize,
 } from './taxonomy.js';
 import { processPhoto, warmUpBackgroundRemoval } from './image.js';
 import { importState, startImport, stopImport, onImportProgress } from './importer.js';
@@ -14,9 +15,9 @@ let itemsLoadedAt = 0;
 const ITEMS_MAX_AGE = 45 * 60 * 1000; // photo links from the cloud expire after an hour
 const filters = {
   seasons: new Set(), occasions: new Set(), types: new Set(), colors: new Set(), materials: new Set(),
-  q: '', more: false,
+  sleeves: new Set(), lengths: new Set(), q: '', more: false,
 };
-const SET_FILTERS = ['seasons', 'occasions', 'types', 'colors', 'materials'];
+const SET_FILTERS = ['seasons', 'occasions', 'types', 'colors', 'materials', 'sleeves', 'lengths'];
 const selection = { on: false, ids: new Set() }; // grid select mode, for editing many items at once
 const UNTAGGED = '__none'; // type filter value for items without a type
 
@@ -52,11 +53,9 @@ function allMaterials() {
   return [...new Set([...DEFAULT_MATERIALS, ...used])];
 }
 
-// The four season chips plus an "All year" shortcut that picks (or clears) all four.
-const seasonChips = (selected) =>
-  SEASONS.map((x) => chip('seasons', x.key, x.label, selected.includes(x.key))).join('') +
-  `<button type="button" class="chip shortcut${ALL_SEASONS.every((k) => selected.includes(k)) ? ' on' : ''}" data-group="all-seasons" data-value="all">All year</button>`;
-const toggleAllSeasons = (selected) => (ALL_SEASONS.every((k) => selected.includes(k)) ? [] : [...ALL_SEASONS]);
+// Spring, Summer, Autumn, Winter and All year. Picking All year clears the seasons and
+// picking a season clears All year (see toggleSeason).
+const seasonChips = (selected) => SEASONS.map((x) => chip('seasons', x.key, x.label, selected.includes(x.key))).join('');
 
 // Same shape whatever the data's age: four-season keys, and a materials list.
 const normalizeItem = (i) => ({ ...i, seasons: normalizeSeasons(i.seasons), materials: i.materials ?? [] });
@@ -129,13 +128,20 @@ function renderSignIn() {
 function matches(item) {
   const f = filters;
   // An item matches a season (or material) filter if it has any of the picked ones.
-  if (f.seasons.size && !item.seasons.some((x) => f.seasons.has(x))) return false;
+  if (f.seasons.has(ALL_YEAR)) {
+    if (!item.seasons.includes(ALL_YEAR)) return false;
+  } else if (f.seasons.size && !item.seasons.includes(ALL_YEAR) && !item.seasons.some((x) => f.seasons.has(x))) {
+    // All-year pieces count for every season.
+    return false;
+  }
+  if (f.sleeves.size && !f.sleeves.has(item.sleeve)) return false;
+  if (f.lengths.size && !f.lengths.has(item.length)) return false;
   if (f.materials.size && !item.materials.some((m) => f.materials.has(m))) return false;
   if (f.occasions.size && !(item.occasions ?? []).some((o) => f.occasions.has(o))) return false;
   if (f.types.size && !f.types.has(item.type || UNTAGGED)) return false;
   if (f.colors.size && !f.colors.has(item.color)) return false;
   if (f.q) {
-    const hay = [item.type, item.subtype, item.color, item.pattern, item.fabric, item.fit, item.brand, item.notes, ...item.materials, ...(item.tags ?? [])]
+    const hay = [item.type, item.subtype, item.color, item.pattern, item.fabric, item.fit, item.brand, item.notes, item.sleeve, item.length, ...item.materials, ...(item.tags ?? [])]
       .join(' ')
       .toLowerCase();
     if (!f.q.toLowerCase().split(/\s+/).every((w) => hay.includes(w))) return false;
@@ -221,13 +227,32 @@ function renderFilters() {
       <div class="filter-row" aria-label="Material">
         ${allMaterials().map((m) => chip('materials', m, capitalize(m), f.materials.has(m))).join('')}
       </div>
+      <div class="filter-row" aria-label="Sleeve">
+        ${SLEEVES.map((x) => chip('sleeves', x, capitalize(x), f.sleeves.has(x))).join('')}
+      </div>
+      <div class="filter-row" aria-label="Length">
+        ${ALL_LENGTHS.map((x) => chip('lengths', x, capitalize(x), f.lengths.has(x))).join('')}
+      </div>
       <input type="search" id="search" placeholder="Search brand, notes, tags…" value="${esc(f.q)}">` : ''}`;
 
   el.onclick = (e) => {
     const c = e.target.closest('.chip');
     if (c) {
-      const set = filters[c.dataset.group];
-      set.has(c.dataset.value) ? set.delete(c.dataset.value) : set.add(c.dataset.value);
+      const { group, value } = c.dataset;
+      const set = filters[group];
+      if (group === 'seasons') {
+        // Same rule as when tagging: All year and the four seasons exclude each other.
+        if (value === ALL_YEAR) {
+          const wasOn = set.has(ALL_YEAR);
+          set.clear();
+          if (!wasOn) set.add(ALL_YEAR);
+        } else {
+          set.delete(ALL_YEAR);
+          set.has(value) ? set.delete(value) : set.add(value);
+        }
+      } else {
+        set.has(value) ? set.delete(value) : set.add(value);
+      }
       return renderFilters(), renderCards();
     }
     if (e.target.id === 'more') return (filters.more = !filters.more), renderFilters();
@@ -320,7 +345,7 @@ function paintSelectBar() {
 function openBatchSheet() {
   const ids = [...selection.ids];
   if (!ids.length) return;
-  const pick = { type: '', color: '', pattern: '', seasons: [], occasions: [], materials: [], photo: '' };
+  const pick = { type: '', color: '', pattern: '', sleeve: '', length: '', seasons: [], occasions: [], materials: [], photo: '' };
   const withOriginal = ids.filter((id) => items.find((i) => i.id === id)?.original_photo_path).length;
   const sheet = document.createElement('div');
   sheet.className = 'sheet-backdrop';
@@ -342,6 +367,10 @@ function openBatchSheet() {
           <div class="chips">${COLORS.map((c) => chip('color', c, colorDot(c) + capitalize(c), pick.color === c)).join('')}</div></fieldset>
         <fieldset><legend>Pattern</legend>
           <div class="chips">${PATTERNS.map((x) => chip('pattern', x, capitalize(x), pick.pattern === x)).join('')}</div></fieldset>
+        <fieldset><legend>Sleeve <span class="muted">(tops, dresses, outerwear)</span></legend>
+          <div class="chips">${SLEEVES.map((x) => chip('sleeve', x, capitalize(x), pick.sleeve === x)).join('')}</div></fieldset>
+        <fieldset><legend>Length <span class="muted">(only where it fits the type)</span></legend>
+          <div class="chips">${ALL_LENGTHS.map((x) => chip('length', x, capitalize(x), pick.length === x)).join('')}</div></fieldset>
         <fieldset><legend>Season <span class="muted">(replaces their seasons)</span></legend>
           <div class="chips">${seasonChips(pick.seasons)}</div></fieldset>
         <fieldset><legend>Add occasion</legend>
@@ -365,6 +394,10 @@ function openBatchSheet() {
       if (pick.type) fields.type = pick.type;
       if (pick.color) fields.color = pick.color;
       if (pick.pattern) fields.pattern = pick.pattern;
+      // Sleeve and length only go on items whose type (possibly set just now) has them.
+      const type = fields.type ?? item.type;
+      if (pick.sleeve && sleevesFor(type).includes(pick.sleeve)) fields.sleeve = pick.sleeve;
+      if (pick.length && lengthsFor(type).includes(pick.length)) fields.length = pick.length;
       if (pick.seasons.length) fields.seasons = pick.seasons;
       if (pick.occasions.length) fields.occasions = [...new Set([...(item.occasions ?? []), ...pick.occasions])];
       if (pick.materials.length) fields.materials = [...new Set([...item.materials, ...pick.materials])];
@@ -410,8 +443,8 @@ function openBatchSheet() {
     const c = e.target.closest('.chip');
     if (c) {
       const { group, value } = c.dataset;
-      if (group === 'all-seasons') {
-        pick.seasons = toggleAllSeasons(pick.seasons);
+      if (group === 'seasons') {
+        pick.seasons = toggleSeason(pick.seasons, value);
       } else if (Array.isArray(pick[group])) {
         pick[group] = pick[group].includes(value) ? pick[group].filter((x) => x !== value) : [...pick[group], value];
       } else {
@@ -431,7 +464,7 @@ function openBatchSheet() {
 
 const BACKUP_FIELDS = [
   'id', 'created_at', 'updated_at', 'seasons', 'occasions', 'type', 'subtype',
-  'color', 'pattern', 'materials', 'fabric', 'fit', 'brand', 'notes', 'tags',
+  'color', 'pattern', 'sleeve', 'length', 'materials', 'fabric', 'fit', 'brand', 'notes', 'tags',
 ];
 
 // Everything she has entered plus each full-size photo, as one zip file.
@@ -498,7 +531,7 @@ async function downloadBackup(e) {
 // ---------- add / edit ----------
 
 const EMPTY = {
-  seasons: [], occasions: [], type: '', subtype: '', color: '', pattern: '', materials: [],
+  seasons: [], occasions: [], type: '', subtype: '', sleeve: '', length: '', color: '', pattern: '', materials: [],
   fit: '', brand: '', notes: '', tags: [],
 };
 
@@ -589,6 +622,8 @@ async function renderEditor(id, { review = false } = {}) {
       <fieldset>
         <legend>Type</legend>
         <div class="chips" id="f-type"></div>
+        <div class="subclass" id="sub-sleeve"><span class="sublabel">Sleeve</span><div class="chips" id="f-sleeve"></div></div>
+        <div class="subclass" id="sub-length"><span class="sublabel">Length</span><div class="chips" id="f-length"></div></div>
         <label class="field">Subtype
           <input type="text" name="subtype" list="subtypes" autocomplete="off">
           <datalist id="subtypes"></datalist>
@@ -661,6 +696,13 @@ async function renderEditor(id, { review = false } = {}) {
     const occ = [...new Set([...occasionChoices, ...draft.occasions])];
     $('#f-occasions').innerHTML = occ.map((o) => chip('occasions', o, capitalize(o), draft.occasions.includes(o))).join('');
     $('#f-type').innerHTML = TYPES.map((t) => chip('type', t.key, t.label, draft.type === t.key)).join('');
+    // Sleeve and length choices depend on the type; hide them when the type has none.
+    const sleeves = sleevesFor(draft.type);
+    const lengths = lengthsFor(draft.type);
+    $('#sub-sleeve').hidden = !sleeves.length;
+    $('#sub-length').hidden = !lengths.length;
+    $('#f-sleeve').innerHTML = sleeves.map((x) => chip('sleeve', x, capitalize(x), draft.sleeve === x)).join('');
+    $('#f-length').innerHTML = lengths.map((x) => chip('length', x, capitalize(x), draft.length === x)).join('');
     $('#f-color').innerHTML = COLORS.map((c) => chip('color', c, colorDot(c) + capitalize(c), draft.color === c)).join('');
     $('#f-pattern').innerHTML = PATTERNS.map((p) => chip('pattern', p, capitalize(p), draft.pattern === p)).join('');
     const subs = TYPES.find((t) => t.key === draft.type)?.subtypes ?? TYPES.flatMap((t) => t.subtypes);
@@ -672,9 +714,9 @@ async function renderEditor(id, { review = false } = {}) {
     const c = e.target.closest('.chip');
     if (!c) return;
     const { group, value } = c.dataset;
-    if (group === 'all-seasons') {
-      draft.seasons = toggleAllSeasons(draft.seasons);
-    } else if (group === 'seasons' || group === 'occasions' || group === 'materials') {
+    if (group === 'seasons') {
+      draft.seasons = toggleSeason(draft.seasons, value);
+    } else if (group === 'occasions' || group === 'materials') {
       const list = draft[group];
       draft[group] = list.includes(value) ? list.filter((x) => x !== value) : [...list, value];
     } else {
@@ -762,6 +804,9 @@ async function renderEditor(id, { review = false } = {}) {
       subtype: form.elements.subtype.value.trim() || null,
       color: draft.color || null,
       pattern: draft.pattern || null,
+      // Kept only if it fits the chosen type (e.g. no sleeve on shoes).
+      sleeve: sleevesFor(draft.type).includes(draft.sleeve) ? draft.sleeve : null,
+      length: lengthsFor(draft.type).includes(draft.length) ? draft.length : null,
       materials: draft.materials,
       fit: form.elements.fit.value.trim() || null,
       brand: form.elements.brand.value.trim() || null,
@@ -884,8 +929,8 @@ async function renderImport() {
     root.onclick = (e) => {
       const c = e.target.closest('.chip');
       if (!c) return;
-      if (c.dataset.group === 'all-seasons') {
-        d.seasons = toggleAllSeasons(d.seasons);
+      if (c.dataset.group === 'seasons') {
+        d.seasons = toggleSeason(d.seasons, c.dataset.value);
       } else {
         const list = d[c.dataset.group];
         const v = c.dataset.value;
