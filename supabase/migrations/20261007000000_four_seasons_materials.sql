@@ -18,8 +18,10 @@ set seasons = coalesce((
   end) as s
 ), '{}');
 
+-- The old season values stay allowed, so the previous version of the app (which still saves
+-- them) keeps working until the new one is live; the new app converts them when it reads.
 alter table public.items add constraint items_seasons_check
-  check (seasons <@ array['spring', 'summer', 'autumn', 'winter']);
+  check (seasons <@ array['spring', 'summer', 'autumn', 'winter', 'spring_summer', 'autumn_winter', 'all_year']);
 
 alter table public.items add column materials text[] not null default '{}';
 
